@@ -30,3 +30,16 @@ npm start
 - CSE data comes from cse.lk's public (unofficial) JSON API. If CSE history is thin, the chart fills in as live prices arrive; use the TradingView tab for full CSE history.
 - Forex data comes from Yahoo Finance and may be slightly delayed.
 - This is an analysis and practice tool. No AI can guarantee profit — always test on demo first and manage risk.
+
+## Positions on the real TradingView chart (Advanced Charts)
+TradingView's free embed chart can't be drawn on by other websites. To see your Demo/Real trades
+(entry, SL, TP box + TP1 line + Entry/TP/SL markers) on a full TradingView chart:
+
+1. Apply for the free **Advanced Charts** library: https://www.tradingview.com/advanced-charts/ → "Get the library".
+2. When approved, you get access to the private GitHub repo `tradingview/charting_library`.
+3. Copy the contents of its `charting_library` folder into `public/charting_library/` in this project
+   (so `public/charting_library/charting_library.standalone.js` exists).
+4. Make your GitHub repo **private** (licence rule), commit, push. Render redeploys.
+
+Pryme detects the library automatically: the tab becomes **"TradingView (positions)"**, fed with Pryme's live data.
+Without the library everything still works (TradingView embed + the Positions chart tab).
