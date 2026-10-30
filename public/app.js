@@ -432,7 +432,7 @@ async function loadMarket(opts = {}) {
     drawSeries(); chart.timeScale().fitContent();
     if (S.candles.length > 150) chart.timeScale().setVisibleLogicalRange({ from: S.candles.length - 150, to: S.candles.length + 8 });
     updateHeader(); renderIndicators();
-    $('#symSub').textContent = [d.name, d.tv || d.symbol, S.market.toUpperCase(), S.tf].filter(Boolean).join(' · ');
+    $('#symSub').textContent = [d.name, d.tv || d.symbol, S.market.toUpperCase(), S.tf, d.feed ? 'feed: ' + d.feed : ''].filter(Boolean).join(' · ');
     if (d.priceNote && d.priceNote.startsWith('futures')) { const m = $('#chartMsg'); m.textContent = 'Spot price feed is busy — showing futures prices for now (slightly higher than spot). Chart is set to futures so levels match.'; m.classList.remove('hidden'); }
     if (d.limited) { const m = $('#chartMsg'); m.textContent = 'CSE history is limited right now — the chart fills in as live prices come in. The TradingView chart shows the full CSE history. AI analysis still uses the day range and 52-week levels.'; m.classList.remove('hidden'); }
     startLive();
@@ -728,7 +728,9 @@ function notify(title, body) {
   } catch { }
 }
 
-const startBar = ms => Math.floor(ms / 60000) * 60; // the 1m bar the item was created in
+const startBar = ms => Math.floor(ms / 60000) * 60;
+// small allowance for feed/broker price differences (spread). Applied equally to TP and SL.
+const tolFor = (market, p) => market === 'forex' ? p * 0.00012 : market === 'crypto' ? p * 0.0002 : 0; // the 1m bar the item was created in
 // migrate items from older versions (they used wall-clock checks and could skip candles)
 [...S.signals, ...S.accounts.demo.positions, ...S.accounts.real.positions].forEach(x => {
   if ('lastCheck' in x) { delete x.lastCheck; x.lastBar = null; }
@@ -765,14 +767,15 @@ function processSignal(g, candles) {
   const events = [];
   // candle-based: re-check the still-forming candle, never skip delayed/missed candles
   for (const c of candles.filter(c => c.time >= (g.lastBar ?? startBar(g.created)))) {
+    const tol = tolFor(g.market, c.close);
     if (g.status === 'waiting') {
       const fill = (g.type === 'BUY LIMIT' && c.low <= g.entry) || (g.type === 'BUY STOP' && c.high >= g.entry) ||
         (g.type === 'SELL LIMIT' && c.high >= g.entry) || (g.type === 'SELL STOP' && c.low <= g.entry);
       if (!fill) continue;
       g.status = 'active'; g.triggered = Date.now(); events.push('active');
     }
-    const hit = lvl => sg > 0 ? c.high >= lvl : c.low <= lvl;
-    const hitSL = sg > 0 ? c.low <= g.sl : c.high >= g.sl;
+    const hit = lvl => sg > 0 ? c.high >= lvl - tol : c.low <= lvl + tol;
+    const hitSL = sg > 0 ? c.low <= g.sl + tol : c.high >= g.sl - tol;
     let justHit = false;
     if (g.status === 'active') {
       if (hitSL) { g.status = 'sl'; recordStat(g, false); events.push('sl'); break; }
@@ -780,7 +783,7 @@ function processSignal(g, candles) {
     }
     if (g.status === 'tp1') {
       if (hit(g.tp2)) { g.status = 'tp2'; events.push('tp2'); break; }
-      if (!justHit && c.time > (g.tp1At ?? 0) && (sg > 0 ? c.low <= g.sl : c.high >= g.sl)) { g.status = 'be'; events.push('be'); break; }
+      if (!justHit && c.time > (g.tp1At ?? 0) && (sg > 0 ? c.low <= g.sl - tol : c.high >= g.sl + tol)) { g.status = 'be'; events.push('be'); break; }
     }
   }
   if (candles.length) g.lastBar = Math.max(g.lastBar ?? 0, candles[candles.length - 1].time);
@@ -860,7 +863,7 @@ function renderSignals() {
   $('#sigList').innerHTML = list.length ? list.map(g => {
     const px = S.livePrices[g.market + '|' + g.symbol];
     const dist = px != null ? ` · now ${fmt(px, g.prec)}` : '';
-    return `<li><span class="tag ${g.dir}">${g.dir === 'long' ? 'BUY' : 'SELL'}</span><span class="s-main">${esc(g.symbol)} #${g.idx + 1} ${g.grade ? `<span class="grade g${g.grade.replace('+', 'p')}">${g.grade}</span>` : ''}</span><span class="st ${g.status}">${label[g.status]}</span><span class="s-sub">${g.type} ${fmt(g.entry, g.prec)} · SL ${fmt(g.sl0, g.prec)} · TP ${fmt(g.tp1, g.prec)}/${fmt(g.tp2, g.prec)}${dist}</span></li>`;
+    return `<li><span class="tag ${g.dir}">${g.dir === 'long' ? 'BUY' : 'SELL'}</span><span class="s-main">${esc(g.symbol)} #${g.idx + 1} ${g.grade ? `<span class="grade g${g.grade.replace('+', 'p')}">${g.grade}</span>` : ''}</span><span class="st ${g.status}">${label[g.status]}</span><span class="s-sub">${g.type} ${fmt(g.entry, g.prec)} · SL ${fmt(g.sl0, g.prec)} · TP ${fmt(g.tp1, g.prec)}/${fmt(g.tp2, g.prec)}${dist}</span>${g.status === 'active' ? `<span class="s-acts"><button class="mk ok" data-smark="tp1" data-id="${g.id}">TP1 hit</button><button class="mk bad" data-smark="sl" data-id="${g.id}">SL hit</button></span>` : g.status === 'tp1' ? `<span class="s-acts"><button class="mk ok" data-smark="tp2" data-id="${g.id}">TP2 hit</button><button class="mk" data-smark="be" data-id="${g.id}">BE</button></span>` : ''}</li>`;
   }).join('') : '<li class="dim">Run an analysis — its setups are tracked here live. When one hits TP, the next setup is created automatically.</li>';
 }
 
@@ -914,7 +917,7 @@ function createPosition(accKey, s, { entry, sl, tp1, tp2, units, market = false,
     id: uid(), acc: accKey, market: S.market, symbol: S.symbol.toUpperCase(), tf: S.tf, dir: s.direction, type,
     entry: isM ? price : entry, sl, tp1, tp2, units, remaining: units, cur: curOf(S.market),
     factor: quoteFactor(S.market, S.symbol, entry), status: isM ? 'open' : 'pending', created: Date.now(), opened: isM ? Date.now() : null,
-    realized: 0, tp1Hit: false, lastBar: null, prec: S.prec, name: s.name, auto, batch: S.batch
+    realized: 0, tp1Hit: false, lastBar: null, prec: S.prec, name: s.name, auto, batch: S.batch, sigId: s.sigId
   };
   S.accounts[accKey].positions.push(pos); saveAccounts();
   return pos;
@@ -948,11 +951,13 @@ function processPosition(pos, candles) {
       addLog(`${ACC_LABEL[pos.acc]} ${pos.symbol} ${pos.type} filled at ${fmt(pos.entry, pos.prec)}.`);
     }
     if (pos.status !== 'open') break;
-    const hitSL = sg > 0 ? c.low <= pos.sl : c.high >= pos.sl;
+    const tol = tolFor(pos.market, c.close);
+    // before TP1: SL with allowance. After TP1 (stop at entry): needs a clear move back through entry.
+    const hitSL = pos.tp1Hit ? (sg > 0 ? c.low <= pos.sl - tol : c.high >= pos.sl + tol) : (sg > 0 ? c.low <= pos.sl + tol : c.high >= pos.sl - tol);
     // after TP1 the stop is at entry; don't judge it on the same candle that hit TP1
     if (hitSL && !(pos.tp1Hit && c.time <= (pos.tp1At ?? 0))) { closePart(pos, pos.sl, pos.remaining, pos.tp1Hit ? 'Break-even stop' : 'Stop loss hit'); break; }
-    if (!pos.tp1Hit && (sg > 0 ? c.high >= pos.tp1 : c.low <= pos.tp1)) { pos.tp1Hit = true; pos.tp1At = c.time; closePart(pos, pos.tp1, pos.units / 2, 'TP1 hit (half closed, SL → entry)'); pos.sl = pos.entry; }
-    if (pos.status === 'open' && (sg > 0 ? c.high >= pos.tp2 : c.low <= pos.tp2)) { closePart(pos, pos.tp2, pos.remaining, 'TP2 hit'); break; }
+    if (!pos.tp1Hit && (sg > 0 ? c.high >= pos.tp1 - tol : c.low <= pos.tp1 + tol)) { pos.tp1Hit = true; pos.tp1At = c.time; closePart(pos, pos.tp1, pos.units / 2, 'TP1 hit (half closed, SL → entry)'); pos.sl = pos.entry; }
+    if (pos.status === 'open' && (sg > 0 ? c.high >= pos.tp2 - tol : c.low <= pos.tp2 + tol)) { closePart(pos, pos.tp2, pos.remaining, 'TP2 hit'); break; }
   }
   if (candles.length) pos.lastBar = Math.max(pos.lastBar ?? 0, candles[candles.length - 1].time);
 }
@@ -1030,12 +1035,37 @@ function renderAccounts() {
     t.innerHTML = '<tr><th>Symbol</th><th>Side</th><th>Status</th><th>Entry</th><th>SL</th><th>TP1</th><th>TP2</th><th>Size</th><th>Now</th><th>P/L</th><th></th></tr>' + d.positions.map(p => {
       const px = S.livePrices[p.market + '|' + p.symbol];
       const pl = p.status === 'open' && px != null ? (px - p.entry) * (p.dir === 'long' ? 1 : -1) * p.remaining * p.factor + p.realized : p.realized;
-      return `<tr><td>${esc(p.symbol)} <small style="color:var(--dim)">${p.tf}</small>${p.auto ? ' <small class="autotag">AUTO</small>' : ''}</td><td class="${p.dir === 'long' ? 'up' : 'down'}">${p.dir === 'long' ? 'BUY' : 'SELL'}</td><td>${p.status === 'pending' ? esc(p.type) : p.tp1Hit ? 'Open · TP1 ✓' : 'Open'}</td><td>${fmt(p.entry, p.prec)}</td><td>${fmt(p.sl, p.prec)}</td><td>${fmt(p.tp1, p.prec)}</td><td>${fmt(p.tp2, p.prec)}</td><td>${(+p.remaining).toPrecision(4)}</td><td>${px != null ? fmt(px, p.prec) : '…'}</td><td class="${pl >= 0 ? 'up' : 'down'}">${money(pl, p.cur)}</td><td><button class="x" data-close-pos="${p.id}">${p.status === 'pending' ? 'Cancel' : 'Close'}</button></td></tr>`;
+      return `<tr><td>${esc(p.symbol)} <small style="color:var(--dim)">${p.tf}</small>${p.auto ? ' <small class="autotag">AUTO</small>' : ''}</td><td class="${p.dir === 'long' ? 'up' : 'down'}">${p.dir === 'long' ? 'BUY' : 'SELL'}</td><td>${p.status === 'pending' ? esc(p.type) : p.tp1Hit ? 'Open · TP1 ✓' : 'Open'}</td><td>${fmt(p.entry, p.prec)}</td><td>${fmt(p.sl, p.prec)}</td><td>${fmt(p.tp1, p.prec)}</td><td>${fmt(p.tp2, p.prec)}</td><td>${(+p.remaining).toPrecision(4)}</td><td>${px != null ? fmt(px, p.prec) : '…'}</td><td class="${pl >= 0 ? 'up' : 'down'}">${money(pl, p.cur)}</td><td class="acts">${p.status === 'open' ? `${!p.tp1Hit ? `<button class="mk ok" data-mark="tp1" data-id="${p.id}">TP1 ✓</button>` : ''}<button class="mk ok" data-mark="tp2" data-id="${p.id}">TP2 ✓</button><button class="mk bad" data-mark="sl" data-id="${p.id}">${p.tp1Hit ? 'BE' : 'SL ✗'}</button>` : ''}<button class="x" data-close-pos="${p.id}">${p.status === 'pending' ? 'Cancel' : 'Close'}</button></td></tr>`;
     }).join('');
   } else {
     if (!d.history.length) { t.innerHTML = '<tr><td style="color:var(--dim);padding:18px 8px">No closed trades yet.</td></tr>'; return; }
     t.innerHTML = '<tr><th>Closed</th><th>Symbol</th><th>Side</th><th>Entry</th><th>Exit</th><th>Result</th><th>P/L</th></tr>' + d.history.slice(0, 100).map(h => `<tr><td>${new Date(h.closed).toLocaleString('en-GB', { timeZone: 'Asia/Colombo', day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' })}</td><td>${esc(h.symbol)}</td><td class="${h.dir === 'long' ? 'up' : 'down'}">${h.dir === 'long' ? 'BUY' : 'SELL'}</td><td>${fmt(h.entry, h.prec)}</td><td>${fmt(h.exit, h.prec)}</td><td>${esc(h.reason)}</td><td class="${h.pnl >= 0 ? 'up' : 'down'}">${h.pnl >= 0 ? '+' : ''}${money(h.pnl, h.cur)}</td></tr>`).join('');
   }
+}
+// Mark TP/SL yourself (e.g. your broker / TradingView showed it hit). Closes at the exact level and triggers the next setup.
+function markPosition(id, kind) {
+  const acc = S.accounts[S.acctView], p = acc.positions.find(x => x.id === id); if (!p || p.status !== 'open') return;
+  const bar = startBar(Date.now());
+  if (kind === 'tp1' && !p.tp1Hit) { p.tp1Hit = true; p.tp1At = bar; closePart(p, p.tp1, p.units / 2, 'TP1 hit (half closed, SL → entry) · marked'); p.sl = p.entry; }
+  else if (kind === 'tp2') closePart(p, p.tp2, p.remaining, 'TP2 hit · marked');
+  else if (kind === 'sl') closePart(p, p.sl, p.remaining, p.tp1Hit ? 'Break-even stop · marked' : 'Stop loss hit · marked');
+  const g = S.signals.find(x => x.id === p.sigId);
+  if (g) { const map = { tp1: 'tp1', tp2: 'tp2', sl: p.tp1Hit ? 'be' : 'sl' }; if ((kind === 'tp1' && g.status === 'active') || (kind === 'tp2' && ['active', 'tp1'].includes(g.status)) || (kind === 'sl' && ['active', 'tp1'].includes(g.status))) applySignalMark(g, map[kind], true); }
+  saveAccounts(); saveSignals(); renderAccounts(); renderAcctCard(); renderSignals();
+}
+function applySignalMark(g, e, quiet) {
+  const bar = startBar(Date.now());
+  if (e === 'tp1' && g.status === 'active') { g.status = 'tp1'; g.sl = g.entry; g.tp1At = bar; recordStat(g, true); }
+  else if (e === 'tp2') { if (g.status === 'active') recordStat(g, true); g.status = 'tp2'; }
+  else if (e === 'sl' && g.status === 'active') { g.status = 'sl'; recordStat(g, false); }
+  else if (e === 'be' && g.status === 'tp1') { g.status = 'be'; }
+  else return;
+  g.lastBar = Math.max(g.lastBar ?? 0, bar);
+  if (!quiet) onSignalEvent(g, e); else renderSignals();
+}
+function markSignal(id, e) {
+  const g = S.signals.find(x => x.id === id); if (!g) return;
+  applySignalMark(g, e, false); saveSignals();
 }
 function manualClose(id) {
   const acc = S.accounts[S.acctView];
@@ -1187,7 +1217,11 @@ function wire() {
   // accounts section
   $('#acctViewSeg').onclick = e => { const b = e.target.closest('button'); if (b) setAcctView(b.dataset.v); };
   $('.tabs2').onclick = e => { const b = e.target.closest('button'); if (b) setAcctTab(b.dataset.dt); };
-  $('#posTable').onclick = e => { const b = e.target.closest('[data-close-pos]'); if (b) manualClose(b.dataset.closePos); };
+  $('#posTable').onclick = e => {
+    const b = e.target.closest('[data-close-pos]'); if (b) return manualClose(b.dataset.closePos);
+    const m = e.target.closest('[data-mark]'); if (m) markPosition(m.dataset.id, m.dataset.mark);
+  };
+  $('#sigList').onclick = e => { const m = e.target.closest('[data-smark]'); if (m) markSignal(m.dataset.id, m.dataset.smark); };
   $('#demoChip').onclick = () => document.getElementById('acctSection').scrollIntoView({ behavior: 'smooth' });
   $('#btnResetAcc').onclick = () => {
     const v = S.acctView;
