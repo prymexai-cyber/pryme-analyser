@@ -270,3 +270,12 @@ td .x{color:var(--short);border:1px solid rgba(255,77,109,.35);border-radius:7px
 .lvl-box .r.now{border-top:1px solid var(--line);margin-top:5px;padding-top:6px}
 @media (max-width:980px){.demo-card{margin:0}}
 @media (max-width:560px){.demo-card{margin:0}.lvl-box{left:6px;bottom:40px;min-width:180px;font-size:11px}}
+
+/* manual TP/SL marks */
+td.acts{display:flex;gap:4px;justify-content:flex-end}
+.mk{font:600 11px var(--mono);padding:3px 7px;border-radius:7px;border:1px solid var(--line2);color:var(--muted)}
+.mk.ok{color:var(--long);border-color:rgba(25,227,162,.4)}
+.mk.ok:hover{background:rgba(25,227,162,.1)}
+.mk.bad{color:var(--short);border-color:rgba(255,77,109,.4)}
+.mk.bad:hover{background:rgba(255,77,109,.1)}
+.s-acts{grid-column:2/4;display:flex;gap:6px;margin-top:4px}
