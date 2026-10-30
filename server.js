@@ -64,20 +64,57 @@ function normCrypto(s) {
   if (!/(USDT|USDC|BTC|ETH|FDUSD|BUSD)$/.test(s)) s += 'USDT';
   return s;
 }
+// Multi-source crypto candles: Binance → Bybit → OKX. If one blocks/rate-limits the server, the next is used.
+const BYBIT_TF = { '1m': '1', '5m': '5', '15m': '15', '30m': '30', '1h': '60', '4h': '240', '1d': 'D' };
+const OKX_TF = { '1m': '1m', '5m': '5m', '15m': '15m', '30m': '30m', '1h': '1H', '4h': '4H', '1d': '1Dutc' };
+const srcBlock = {}; // source -> blocked until (ms)
+function noteSrcError(src, e) {
+  const m = /HTTP (403|418|429|451)/.exec(e.message || ''); if (!m) return;
+  const until = /banned until (\d{13})/.exec(e.message);
+  const mins = { '403': 30, '418': 30, '429': 2, '451': 360 }[m[1]];
+  srcBlock[src] = until ? +until[1] : Date.now() + mins * 60 * 1000;
+}
+const okxInst = s => { const m = /^(.+?)(USDT|USDC|BTC|ETH)$/.exec(s); return m ? `${m[1]}-${m[2]}` : s; };
+const CRYPTO_SOURCES = {
+  binance: async (s, tf, limit) => {
+    let lastErr;
+    for (const h of ['https://data-api.binance.vision', 'https://api.binance.com']) {
+      try {
+        const rows = await fetchJSON(`${h}/api/v3/klines?symbol=${s}&interval=${tf}&limit=${Math.min(limit, 1000)}`);
+        return rows.map(r => ({ time: Math.floor(r[0] / 1000), open: +r[1], high: +r[2], low: +r[3], close: +r[4], volume: +r[5] }));
+      } catch (e) { lastErr = e; noteSrcError('binance', e); if (Date.now() < (srcBlock.binance || 0)) break; }
+    }
+    throw lastErr;
+  },
+  bybit: async (s, tf, limit) => {
+    const j = await fetchJSON(`https://api.bybit.com/v5/market/kline?category=spot&symbol=${s}&interval=${BYBIT_TF[tf]}&limit=${Math.min(limit, 1000)}`);
+    const list = j?.result?.list;
+    if (!Array.isArray(list) || !list.length) throw new Error('bybit: ' + (j.retMsg || 'no data'));
+    return list.map(r => ({ time: Math.floor(+r[0] / 1000), open: +r[1], high: +r[2], low: +r[3], close: +r[4], volume: +r[5] })).reverse();
+  },
+  okx: async (s, tf, limit) => {
+    const inst = okxInst(s);
+    let rows = (await fetchJSON(`https://www.okx.com/api/v5/market/candles?instId=${inst}&bar=${OKX_TF[tf]}&limit=300`)).data || [];
+    // page older history if more is needed
+    while (rows.length && rows.length < limit) {
+      const older = (await fetchJSON(`https://www.okx.com/api/v5/market/history-candles?instId=${inst}&bar=${OKX_TF[tf]}&after=${rows[rows.length - 1][0]}&limit=100`)).data || [];
+      if (!older.length) break; rows = rows.concat(older);
+    }
+    if (!rows.length) throw new Error('okx: no data for ' + inst);
+    return rows.map(r => ({ time: Math.floor(+r[0] / 1000), open: +r[1], high: +r[2], low: +r[3], close: +r[4], volume: +r[5] })).reverse();
+  }
+};
 async function cryptoCandles(symbol, tf, limit) {
   const s = normCrypto(symbol);
-  const hosts = ['https://data-api.binance.vision', 'https://api.binance.com', 'https://api1.binance.com'];
-  let lastErr;
-  for (const h of hosts) {
+  const errs = [];
+  for (const [src, fn] of Object.entries(CRYPTO_SOURCES)) {
+    if (Date.now() < (srcBlock[src] || 0)) { errs.push(`${src} paused`); continue; }
     try {
-      const rows = await fetchJSON(`${h}/api/v3/klines?symbol=${s}&interval=${tf}&limit=${Math.min(limit, 1000)}`);
-      return {
-        symbol: s, tv: 'BINANCE:' + s,
-        candles: rows.map(r => ({ time: Math.floor(r[0] / 1000), open: +r[1], high: +r[2], low: +r[3], close: +r[4], volume: +r[5] }))
-      };
-    } catch (e) { lastErr = e; }
+      const candles = (await fn(s, tf, limit)).slice(-limit);
+      if (candles.length) return { symbol: s, tv: 'BINANCE:' + s, feed: src, candles };
+    } catch (e) { noteSrcError(src, e); errs.push(`${src}: ${String(e.message).slice(0, 80)}`); }
   }
-  throw lastErr;
+  throw new Error('All crypto feeds failed (' + errs.join(' | ') + ')');
 }
 
 /* ---------- FOREX / GOLD / INDICES / INTL STOCKS (Yahoo Finance chart API) ---------- */
@@ -160,7 +197,7 @@ async function goldSpotCandles(tf, limit) {
   if (spot && Math.abs(spot - last) / last < 0.03) lastBasis.PAXG = { b: spot - last, t: Date.now() };
   const lb = lastBasis.PAXG, b = lb && Date.now() - lb.t < 60 * 60 * 1000 ? lb.b : 0;
   let candles = k.candles.map(c => ({ ...c, open: c.open + b, high: c.high + b, low: c.low + b, close: c.close + b }));
-  let feed = b ? 'PAXG + spot adjust' : 'PAXG (spot feed down)';
+  let feed = (b ? 'PAXG + spot adjust' : 'PAXG (spot feed down)') + ' · ' + k.feed;
   if (tf === '1m') {
     // replace with true spot candles where we have ticks (skip the first, partial minute)
     const tc = goldTickCandles().slice(1);
@@ -290,16 +327,28 @@ async function cseCandles(symbol, tf, limit) {
 /* ---------- routes ---------- */
 app.get('/api/health', (_, res) => res.json({ ok: true, time: Date.now() }));
 
+// Live spot gold for the browser (it fetches PAXG candles from Binance itself and shifts them to spot)
+app.get('/api/goldspot', async (req, res) => {
+  wantGoldTicks();
+  let spot = null;
+  const lt = goldTicks[goldTicks.length - 1];
+  if (lt && Date.now() / 1000 - lt.t < 20) spot = lt.p;
+  else { try { const j = await cached('goldapi', 8000, () => fetchJSON('https://api.gold-api.com/price/XAU', {}, 6000)); spot = +j.price || null; } catch (_) { } }
+  res.json({ spot, candles1m: req.query.m1 ? goldTickCandles().slice(1) : [] });
+});
+
 // Open https://<your-app>.onrender.com/api/diag to see which data feeds work from the server
 app.get('/api/diag', async (_, res) => {
   const test = async (name, fn) => { const t = Date.now(); try { const v = await fn(); return { name, ok: true, ms: Date.now() - t, sample: v }; } catch (e) { return { name, ok: false, ms: Date.now() - t, error: e.message }; } };
   const out = await Promise.all([
-    test('Binance (crypto + gold)', async () => (await cryptoCandles('PAXGUSDT', '1m', 2)).candles.at(-1).close),
+    test('Binance', async () => (await CRYPTO_SOURCES.binance('BTCUSDT', '1m', 2)).at(-1).close),
+    test('Bybit', async () => (await CRYPTO_SOURCES.bybit('BTCUSDT', '1m', 2)).at(-1).close),
+    test('OKX', async () => (await CRYPTO_SOURCES.okx('BTCUSDT', '1m', 2)).at(-1).close),
     test('Gold spot (gold-api.com)', async () => (await fetchJSON('https://api.gold-api.com/price/XAU', {}, 6000)).price),
     test('Yahoo (forex + stocks)', async () => { const d = await fetchJSON('https://query1.finance.yahoo.com/v8/finance/chart/EURUSD=X?interval=1m&range=1d'); return d.chart.result[0].meta.regularMarketPrice; }),
     test('CSE (cse.lk)', async () => (await csePost('marketStatus', '')).status),
   ]);
-  res.json({ region: process.env.RENDER_REGION || 'unknown', goldTicks: goldTicks.length, feeds: out });
+  res.json({ region: process.env.RENDER_REGION || 'unknown', goldTicks: goldTicks.length, paused: Object.fromEntries(Object.entries(srcBlock).filter(([, v]) => v > Date.now()).map(([k, v]) => [k, new Date(v).toISOString()])), feeds: out });
 });
 
 app.get('/api/candles', async (req, res) => {
@@ -307,14 +356,16 @@ app.get('/api/candles', async (req, res) => {
   const symbol = (req.query.symbol || 'BTCUSDT').trim();
   const tf = TF_SEC[req.query.tf] ? req.query.tf : '1h';
   const limit = Math.min(+req.query.limit || 500, 1000);
+  // round the limit up so many different requests share one cached upstream call
+  const fetchLimit = limit <= 100 ? 100 : limit <= 500 ? 500 : 1000;
   try {
-    const ttl = market === 'crypto' ? (tf === '1m' ? 5000 : 10000) : 20000;
-    const out = await cached(`${market}|${symbol}|${tf}|${limit}`, ttl, async () => {
-      if (market === 'crypto') return cryptoCandles(symbol, tf, limit);
-      if (market === 'cse') return cseCandles(symbol, tf, limit);
-      return yahooCandles(symbol, market, tf, limit);
+    const ttl = tf === '1m' ? 8000 : 20000;
+    const out = await cached(`${market}|${symbol.toUpperCase()}|${tf}|${fetchLimit}`, ttl, async () => {
+      if (market === 'crypto') return cryptoCandles(symbol, tf, fetchLimit);
+      if (market === 'cse') return cseCandles(symbol, tf, fetchLimit);
+      return yahooCandles(symbol, market, tf, fetchLimit);
     });
-    res.json({ market, tf, ...out });
+    res.json({ market, tf, ...out, candles: (out.candles || []).slice(-limit) });
   } catch (e) {
     res.status(502).json({ error: 'Data fetch failed: ' + e.message });
   }
@@ -330,18 +381,25 @@ function fxUniverse() {
   for (const c of CCY) if (!MAJ.includes(c)) { set.set('USD' + c, `USD/${c}`); set.set('EUR' + c, `EUR/${c}`); set.set('GBP' + c, `GBP/${c}`); }
   return [...set].map(([symbol, name]) => ({ symbol, name }));
 }
+let cryptoListFailAt = 0;
 async function cryptoUniverse() {
-  return cached('cryptoList', 6 * 3600 * 1000, async () => {
-    for (const h of ['https://data-api.binance.vision', 'https://api.binance.com']) {
+  if (Date.now() - cryptoListFailAt < 5 * 60 * 1000 && !cache.get('cryptoList')) return [];
+  try {
+    return await cached('cryptoList', 6 * 3600 * 1000, async () => {
+      // Bybit first (cheap); Binance's full ticker list is "heavy" and can get a shared IP banned
       try {
-        const rows = await fetchJSON(`${h}/api/v3/ticker/24hr?type=MINI`, {}, 20000);
-        return rows.filter(r => /USDT$/.test(r.symbol) && +r.quoteVolume > 0)
-          .sort((a, b) => +b.quoteVolume - +a.quoteVolume)
-          .map(r => ({ symbol: r.symbol, name: r.symbol.replace(/USDT$/, '') + ' / Tether' }));
+        const j = await fetchJSON('https://api.bybit.com/v5/market/tickers?category=spot', {}, 20000);
+        const list = (j?.result?.list || []).filter(r => /USDT$/.test(r.symbol) && +r.turnover24h > 0)
+          .sort((a, b) => +b.turnover24h - +a.turnover24h).map(r => ({ symbol: r.symbol, name: r.symbol.replace(/USDT$/, '') + ' / Tether' }));
+        if (list.length) return list;
       } catch (_) { }
-    }
-    return [];
-  });
+      const j = await fetchJSON('https://www.okx.com/api/v5/market/tickers?instType=SPOT', {}, 20000);
+      const list = (j.data || []).filter(r => /-USDT$/.test(r.instId)).sort((a, b) => +b.volCcy24h * +b.last - +a.volCcy24h * +a.last)
+        .map(r => ({ symbol: r.instId.replace('-', ''), name: r.instId.replace('-USDT', '') + ' / Tether' }));
+      if (!list.length) throw new Error('no list');
+      return list;
+    });
+  } catch (_) { cryptoListFailAt = Date.now(); return []; }
 }
 async function cseUniverse() {
   return cached('cseList', 6 * 3600 * 1000, async () => {
