@@ -72,7 +72,7 @@ async function cryptoCandles(symbol, tf, limit) {
     try {
       const rows = await fetchJSON(`${h}/api/v3/klines?symbol=${s}&interval=${tf}&limit=${Math.min(limit, 1000)}`);
       return {
-        symbol: s,
+        symbol: s, tv: 'BINANCE:' + s,
         candles: rows.map(r => ({ time: Math.floor(r[0] / 1000), open: +r[1], high: +r[2], low: +r[3], close: +r[4], volume: +r[5] }))
       };
     } catch (e) { lastErr = e; }
@@ -99,6 +99,36 @@ const YH = {
   '1m': ['1m', '5d'], '5m': ['5m', '1mo'], '15m': ['15m', '1mo'], '30m': ['30m', '1mo'],
   '1h': ['60m', '6mo'], '4h': ['60m', '2y'], '1d': ['1d', '5y']
 };
+/* Spot metals: Yahoo only has futures (GC=F / SI=F) which trade $10-20 above spot.
+   We fetch the live SPOT price and shift the futures candles so prices match
+   OANDA:XAUUSD on TradingView and your broker. */
+const METAL = { 'GC=F': { code: 'XAU', tv: 'OANDA:XAUUSD', tvFut: 'COMEX:GC1!' }, 'SI=F': { code: 'XAG', tv: 'OANDA:XAGUSD', tvFut: 'COMEX:SI1!' } };
+const lastBasis = {};
+async function metalSpot(code) {
+  return cached('spot|' + code, 8000, async () => {
+    try {
+      const j = await fetchJSON(`https://api.gold-api.com/price/${code}`, {}, 6000);
+      if (+j.price > 0) return +j.price;
+    } catch (_) { }
+    if (code === 'XAU') { // fallback: PAX Gold on Binance (1 PAXG = 1 oz gold)
+      const hosts = ['https://data-api.binance.vision', 'https://api.binance.com'];
+      for (const h of hosts) {
+        try { const j = await fetchJSON(`${h}/api/v3/ticker/price?symbol=PAXGUSDT`, {}, 6000); if (+j.price > 0) return +j.price; } catch (_) { }
+      }
+    }
+    return null;
+  });
+}
+const TV_INDEX = { '^NDX': 'NASDAQ:NDX', '^DJI': 'DJ:DJI', '^GSPC': 'SP:SPX', '^GDAXI': 'XETR:DAX', '^FTSE': 'TVC:UKX', '^N225': 'TVC:NI225', 'DX-Y.NYB': 'TVC:DXY', 'CL=F': 'NYMEX:CL1!', 'BZ=F': 'ICEEUR:BRN1!' };
+const TV_SUFFIX = { NS: 'NSE', BO: 'BSE', L: 'LSE', TO: 'TSX', V: 'TSXV', AX: 'ASX', HK: 'HKEX', T: 'TSE', DE: 'XETR', F: 'FWB', PA: 'EURONEXT', AS: 'EURONEXT', BR: 'EURONEXT', MI: 'MIL', MC: 'BME', SW: 'SIX', ST: 'OMXSTO', CO: 'OMXCOP', OL: 'OSL', KS: 'KRX', KQ: 'KRX', SS: 'SSE', SZ: 'SZSE', SI: 'SGX', JK: 'IDX', KL: 'MYX', BK: 'SET', SA: 'BMFBOVESPA', MX: 'BMV', JO: 'JSE', TW: 'TWSE', NZ: 'NZX', IS: 'BIST', TA: 'TASE', SR: 'TADAWUL', QA: 'QSE', AE: 'DFM' };
+function tvForYahoo(ys) {
+  if (TV_INDEX[ys]) return TV_INDEX[ys];
+  if (ys.endsWith('=X')) return 'FX_IDC:' + ys.replace('=X', '');
+  const m = /^(.+)\.([A-Z]{1,3})$/.exec(ys);
+  if (m && TV_SUFFIX[m[2]]) return TV_SUFFIX[m[2]] + ':' + m[1].replace(/-/g, '_');
+  return ys.replace(/-/g, '.');
+}
+
 async function yahooCandles(symbol, market, tf, limit) {
   const ys = normYahoo(symbol, market);
   const [interval, range] = YH[tf] || YH['1h'];
@@ -119,7 +149,23 @@ async function yahooCandles(symbol, market, tf, limit) {
     candles.push({ time: t, open: q.open[i], high: q.high[i], low: q.low[i], close: q.close[i], volume: q.volume?.[i] || 0 });
   });
   if (tf === '4h') candles = aggregate(candles, 14400);
-  return { symbol: ys, currency: res.meta?.currency, name: res.meta?.longName || res.meta?.shortName, candles: candles.slice(-limit) };
+  let tv = tvForYahoo(ys), name = res.meta?.longName || res.meta?.shortName, priceNote = null;
+  const metal = METAL[ys];
+  if (metal && candles.length) {
+    const spot = await metalSpot(metal.code);
+    const last = candles[candles.length - 1].close;
+    if (spot && Math.abs(spot - last) / last < 0.03) lastBasis[ys] = { b: spot - last, t: Date.now() };
+    const lb = lastBasis[ys];
+    if (lb && Date.now() - lb.t < 30 * 60 * 1000) {
+      const b = lb.b;
+      candles = candles.map(c => ({ ...c, open: c.open + b, high: c.high + b, low: c.low + b, close: c.close + b }));
+      tv = metal.tv; name = metal.code === 'XAU' ? 'Gold spot (XAU/USD)' : 'Silver spot (XAG/USD)';
+      priceNote = 'spot';
+    } else {
+      tv = metal.tvFut; priceNote = 'futures (spot feed unavailable)';
+    }
+  }
+  return { symbol: ys, tv, currency: res.meta?.currency, name, priceNote, candles: candles.slice(-limit) };
 }
 
 /* ---------- SRI LANKA CSE (unofficial public JSON API on cse.lk) ---------- */
@@ -193,7 +239,7 @@ async function cseCandles(symbol, tf, limit) {
     const ticks = (cseTicks.get(s) || []).map(t => ({ time: t.time, open: t.price, high: t.price, low: t.price, close: t.price }));
     candles = aggregate(ticks, TF_SEC[tf] || 3600);
   }
-  return { symbol: s, currency: 'LKR', name: quote.name, quote, candles: candles.slice(-limit), limited: candles.length < 30 };
+  return { symbol: s, tv: 'CSELK:' + s, currency: 'LKR', name: quote.name, quote, candles: candles.slice(-limit), limited: candles.length < 30 };
 }
 
 /* ---------- routes ---------- */
@@ -205,7 +251,7 @@ app.get('/api/candles', async (req, res) => {
   const tf = TF_SEC[req.query.tf] ? req.query.tf : '1h';
   const limit = Math.min(+req.query.limit || 500, 1000);
   try {
-    const ttl = tf === '1m' ? 5000 : 15000;
+    const ttl = market === 'crypto' ? (tf === '1m' ? 5000 : 10000) : 20000;
     const out = await cached(`${market}|${symbol}|${tf}|${limit}`, ttl, async () => {
       if (market === 'crypto') return cryptoCandles(symbol, tf, limit);
       if (market === 'cse') return cseCandles(symbol, tf, limit);
@@ -214,6 +260,62 @@ app.get('/api/candles', async (req, res) => {
     res.json({ market, tf, ...out });
   } catch (e) {
     res.status(502).json({ error: 'Data fetch failed: ' + e.message });
+  }
+});
+
+/* ---------- SYMBOL SEARCH (any stock / coin / forex pair / CSE company) ---------- */
+const CCY = ['USD', 'EUR', 'GBP', 'JPY', 'AUD', 'NZD', 'CAD', 'CHF', 'SGD', 'HKD', 'NOK', 'SEK', 'DKK', 'PLN', 'CZK', 'HUF', 'TRY', 'ZAR', 'MXN', 'BRL', 'CNH', 'CNY', 'INR', 'LKR', 'PKR', 'THB', 'MYR', 'IDR', 'PHP', 'KRW', 'TWD', 'AED', 'SAR', 'QAR', 'KWD', 'ILS', 'RUB', 'CLP', 'COP', 'EGP', 'NGN', 'KES', 'BDT', 'VND'];
+const MAJ = ['USD', 'EUR', 'GBP', 'JPY', 'AUD', 'NZD', 'CAD', 'CHF'];
+const FX_EXTRA = [['XAUUSD', 'Gold spot'], ['XAGUSD', 'Silver spot'], ['USOIL', 'WTI crude oil'], ['UKOIL', 'Brent crude oil'], ['NAS100', 'Nasdaq 100'], ['US30', 'Dow Jones 30'], ['SPX500', 'S&P 500'], ['GER40', 'DAX 40'], ['UK100', 'FTSE 100'], ['JP225', 'Nikkei 225'], ['DXY', 'US dollar index']];
+function fxUniverse() {
+  const set = new Map(FX_EXTRA.map(([s, n]) => [s, n]));
+  for (const a of MAJ) for (const b of MAJ) if (a !== b) set.set(a + b, `${a}/${b}`);
+  for (const c of CCY) if (!MAJ.includes(c)) { set.set('USD' + c, `USD/${c}`); set.set('EUR' + c, `EUR/${c}`); set.set('GBP' + c, `GBP/${c}`); }
+  return [...set].map(([symbol, name]) => ({ symbol, name }));
+}
+async function cryptoUniverse() {
+  return cached('cryptoList', 6 * 3600 * 1000, async () => {
+    for (const h of ['https://data-api.binance.vision', 'https://api.binance.com']) {
+      try {
+        const rows = await fetchJSON(`${h}/api/v3/ticker/24hr?type=MINI`, {}, 20000);
+        return rows.filter(r => /USDT$/.test(r.symbol) && +r.quoteVolume > 0)
+          .sort((a, b) => +b.quoteVolume - +a.quoteVolume)
+          .map(r => ({ symbol: r.symbol, name: r.symbol.replace(/USDT$/, '') + ' / Tether' }));
+      } catch (_) { }
+    }
+    return [];
+  });
+}
+async function cseUniverse() {
+  return cached('cseList', 6 * 3600 * 1000, async () => {
+    const rows = await csePost('allSecurityCode', '');
+    return (Array.isArray(rows) ? rows : []).filter(r => r.active !== 0).map(r => ({ symbol: r.symbol, name: r.name }));
+  });
+}
+app.get('/api/search', async (req, res) => {
+  const market = (req.query.market || 'stock').toLowerCase();
+  const q = String(req.query.q || '').trim().toUpperCase();
+  try {
+    let out = [];
+    if (market === 'forex') {
+      const qq = q.replace(/[^A-Z0-9]/g, '');
+      out = fxUniverse().filter(x => !qq || x.symbol.includes(qq) || x.name.toUpperCase().includes(q));
+    } else if (market === 'crypto') {
+      const qq = q.replace(/[^A-Z0-9]/g, '');
+      const all = await cryptoUniverse();
+      out = qq ? all.filter(x => x.symbol.startsWith(qq)).concat(all.filter(x => !x.symbol.startsWith(qq) && x.symbol.includes(qq))) : all;
+    } else if (market === 'cse') {
+      const all = await cseUniverse();
+      out = all.filter(x => !q || x.symbol.includes(q) || (x.name || '').toUpperCase().includes(q));
+    } else {
+      if (!q) return res.json({ items: [] });
+      const j = await cached('ysearch|' + q, 3600 * 1000, () => fetchJSON(`https://query2.finance.yahoo.com/v1/finance/search?q=${encodeURIComponent(q)}&quotesCount=20&newsCount=0&listsCount=0`));
+      out = (j.quotes || []).filter(x => ['EQUITY', 'ETF', 'INDEX', 'MUTUALFUND'].includes(x.quoteType))
+        .map(x => ({ symbol: x.symbol, name: `${x.shortname || x.longname || ''} · ${x.exchDisp || x.exchange || ''}` }));
+    }
+    res.json({ items: out.slice(0, 30) });
+  } catch (e) {
+    res.json({ items: [], error: e.message });
   }
 });
 
