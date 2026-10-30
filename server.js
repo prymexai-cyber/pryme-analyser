@@ -268,7 +268,11 @@ function pickNum(o, keys) { for (const k of keys) if (o[k] != null && !isNaN(+o[
 
 async function cseCandles(symbol, tf, limit) {
   const s = normCSE(symbol);
-  const info = await csePost(`companyInfoSummery?symbol=${encodeURIComponent(s)}`, `symbol=${encodeURIComponent(s)}`);
+  // symbol only in the URL (sending it in the body too makes CSE read "JKH.N0000,JKH.N0000" → 404)
+  let info;
+  try { info = await csePost(`companyInfoSummery?symbol=${encodeURIComponent(s)}`, ''); }
+  catch (e) { info = await csePost('companyInfoSummery', `symbol=${encodeURIComponent(s)}`); }
+  if (!info?.reqSymbolInfo?.symbol && !info?.reqSymbolInfo?.lastTradedPrice) throw new Error(`CSE: no data for ${s} — check the symbol (e.g. JKH.N0000)`);
   const ri = info?.reqSymbolInfo || {};
   const id = ri.id || ri.securityId;
   const quote = {
