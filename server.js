@@ -129,8 +129,23 @@ function tvForYahoo(ys) {
   return ys.replace(/-/g, '.');
 }
 
+/* GOLD: real-time candles from Binance PAXG (1 PAXG = 1 oz gold, no 10-min delay like COMEX on Yahoo),
+   shifted to the live spot price so levels match OANDA:XAUUSD / your broker. */
+async function goldSpotCandles(tf, limit) {
+  const k = await cryptoCandles('PAXGUSDT', tf, limit);
+  if (!k.candles.length) throw new Error('no PAXG data');
+  const last = k.candles[k.candles.length - 1].close;
+  let spot = null;
+  try { const j = await cached('goldapi', 8000, () => fetchJSON('https://api.gold-api.com/price/XAU', {}, 6000)); spot = +j.price || null; } catch (_) { }
+  if (spot && Math.abs(spot - last) / last < 0.03) lastBasis.PAXG = { b: spot - last, t: Date.now() };
+  const lb = lastBasis.PAXG, b = lb && Date.now() - lb.t < 60 * 60 * 1000 ? lb.b : 0;
+  const candles = k.candles.map(c => ({ ...c, open: c.open + b, high: c.high + b, low: c.low + b, close: c.close + b }));
+  return { symbol: 'XAUUSD', tv: 'OANDA:XAUUSD', currency: 'USD', name: 'Gold spot (XAU/USD)', priceNote: 'spot', candles };
+}
+
 async function yahooCandles(symbol, market, tf, limit) {
   const ys = normYahoo(symbol, market);
+  if (ys === 'GC=F') { try { return await goldSpotCandles(tf, limit); } catch (_) { /* fall back to Yahoo below */ } }
   const [interval, range] = YH[tf] || YH['1h'];
   let data, lastErr;
   for (const host of ['query1', 'query2']) {
