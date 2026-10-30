@@ -33,7 +33,7 @@ const S = {
   symbol: null,
   tf: store.get('pa_tf', '15m'),
   candles: [], meta: {}, ind: null,
-  ws: null, poll: null, view: 'tv', searchHits: null,
+  ws: null, poll: null, view: store.get('pa_view', 'tv'), searchHits: null,
   setups: [], analysis: null, priceLines: [], selected: null,
   news: [],
   settings: Object.assign({ keys: [], lang: 'singlish', riskPct: 1, active: 'demo' }, store.get('pa_settings', {})),
@@ -368,24 +368,38 @@ function drawSetupLines(idx) {
   S.setups.forEach((o, i) => { if (i !== idx) add(o.entry, 'rgba(78,168,255,.35)', `#${i + 1}`, 1, 1); });
   const last = S.candles[S.candles.length - 1];
   S.setupMarker = { time: last.time, position: s.direction === 'long' ? 'belowBar' : 'aboveBar', color: s.direction === 'long' ? '#19e3a2' : '#ff4d6d', shape: s.direction === 'long' ? 'arrowUp' : 'arrowDown', text: `#${idx + 1} ${s.direction === 'long' ? 'BUY' : 'SELL'}` };
-  updateMarkers(); drawBoxes();
+  updateMarkers(); drawBoxes(); S.lvlHidden = false; renderLvlBox();
   $$('.setup').forEach((el, i) => el.classList.toggle('sel', i === idx));
   renderLvlBox();
 }
 // floating levels panel over the TradingView chart
 function renderLvlBox() {
-  const box = $('#lvlBox'), s = S.setups[S.selected];
-  if (!s) { box.classList.add('hidden'); return; }
+  const box = $('#lvlBox'); if (!box) return;
+  if (S.lvlHidden) { box.classList.add('hidden'); return; }
+  const s = S.setups[S.selected];
   const px = S.candles.length ? S.candles[S.candles.length - 1].close : null;
-  const sg = s.direction === 'long' ? 1 : -1;
-  const pl = px != null ? (px - s.entry) * sg : null;
-  box.innerHTML = `<div class="lb-head"><span class="tag ${s.direction}">${s.direction === 'long' ? 'BUY' : 'SELL'}</span><b>#${S.selected + 1}</b> <span style="color:var(--dim)">${s.grade || ''} · ${s.confidence}%</span><button data-lb-close title="Hide">✕</button></div>
+  const pos = chartItems();
+  if (!s && !pos.length) { box.classList.add('hidden'); return; }
+  let html = '';
+  if (s) {
+    const sg = s.direction === 'long' ? 1 : -1, pl = px != null ? (px - s.entry) * sg : null;
+    html += `<div class="lb-head"><span class="tag ${s.direction}">${s.direction === 'long' ? 'BUY' : 'SELL'}</span><b>Setup #${S.selected + 1}</b> <span style="color:var(--dim)">${s.grade || ''} · ${s.confidence}%</span><button data-lb-close title="Hide">✕</button></div>
     <div class="r en"><span>ENTRY</span><b>${fmt(s.entry)}</b></div>
     <div class="r sl"><span>STOP LOSS</span><b>${fmt(s.stopLoss)}</b></div>
     <div class="r tp"><span>TP1</span><b>${fmt(s.tp1)}</b></div>
     <div class="r tp"><span>TP2</span><b>${fmt(s.tp2)}</b></div>
     <div class="r tp"><span>TP3</span><b>${fmt(s.tp3)}</b></div>
     ${px != null ? `<div class="r now"><span>NOW</span><b class="${pl >= 0 ? 'up' : 'down'}">${fmt(px)} (${pl >= 0 ? '+' : ''}${fmt(pl)})</b></div>` : ''}`;
+  } else {
+    html += `<div class="lb-head"><b>Open positions</b><button data-lb-close title="Hide">✕</button></div>`;
+  }
+  pos.forEach(p => {
+    const pl = px != null && p.status === 'open' ? plOf(p, px) : null;
+    const st = p.status === 'pending' ? p.type : p.tp1Hit ? 'TP1 ✓ · SL at entry' : 'In trade';
+    html += `<div class="lb-pos"><div class="r"><span><span class="tag ${p.dir}">${p.dir === 'long' ? 'BUY' : 'SELL'}</span> ${p.acc === 'real' ? 'REAL' : 'DEMO'} · ${esc(st)}</span><b class="${pl == null ? '' : pl >= 0 ? 'up' : 'down'}">${pl == null ? '' : (pl >= 0 ? '+' : '') + money(pl, p.cur)}</b></div>
+      <div class="r"><span>E ${fmt(p.entry, p.prec)} · SL ${fmt(p.sl, p.prec)}</span><span>TP ${p.tp1Hit ? '✓' : fmt(p.tp1, p.prec)} / ${fmt(p.tp2, p.prec)}</span></div></div>`;
+  });
+  box.innerHTML = html;
   box.classList.remove('hidden');
 }
 
@@ -400,10 +414,22 @@ function tvSymbol() {
   }
   return s;
 }
-function setView() {
-  // one live chart (TradingView Lightweight Charts) — positions are drawn on it. Link opens the full TradingView chart.
-  S.view = 'pryme';
+// Two views: the real TradingView live chart, and the Pryme positions chart (entry / SL / TP boxes drawn on it)
+function setView(v) {
+  if (v) { S.view = v; store.set('pa_view', v); }
+  const tv = S.view !== 'pryme';
+  $$('.chart-tabs button').forEach(b => b.classList.toggle('on', b.dataset.view === (tv ? 'tv' : 'pryme')));
+  $('#tvWrap').classList.toggle('hidden', !tv);
+  $('#chart').classList.toggle('hidden', tv);
+  $('#posLayer').classList.toggle('hidden', tv);
   const a = $('#tvLink'); if (a) a.href = 'https://www.tradingview.com/chart/?symbol=' + encodeURIComponent(tvSymbol());
+  if (tv) {
+    const src = `https://s.tradingview.com/widgetembed/?frameElementId=tvf&symbol=${encodeURIComponent(tvSymbol())}&interval=${TV_INT[S.tf]}&theme=dark&style=1&timezone=Asia%2FColombo&withdateranges=1&allow_symbol_change=0&saveimage=0&studies=%5B%5D&locale=en`;
+    const w = $('#tvWrap');
+    if (w.dataset.src !== src) { w.innerHTML = `<iframe src="${src}" allowfullscreen></iframe>`; w.dataset.src = src; }
+  } else {
+    setTimeout(() => { try { drawBoxes(); } catch { } }, 50);
+  }
 }
 
 /* ---------------- data loading / live ---------------- */
@@ -483,7 +509,8 @@ async function loadMarket(opts = {}) {
   $('#lastPrice').textContent = '—'; $('#lastChg').textContent = ''; $('#indRow').innerHTML = '';
   $('#symTitle').textContent = S.symbol.toUpperCase();
   $('#symSub').textContent = 'Loading data…';
-  setView('tv'); // show the right TradingView chart straight away
+  try { candleS.setData([]); volS.setData([]); e20S.setData([]); e50S.setData([]); e200S.setData([]); } catch { } // never show the previous symbol's candles
+  setView(); // show the right TradingView chart straight away
   $('#chartMsg').classList.add('hidden');
   setLive(false, 'LOADING');
   try {
@@ -496,10 +523,10 @@ async function loadMarket(opts = {}) {
     S.loadedKey = `${S.market}|${S.symbol.toUpperCase()}`;
     drawSeries(); chart.timeScale().fitContent();
     if (S.candles.length > 150) chart.timeScale().setVisibleLogicalRange({ from: S.candles.length - 150, to: S.candles.length + 8 });
-    updateHeader(); renderIndicators(); updateMarkers(); drawPositions();
+    updateHeader(); renderIndicators(); updateMarkers(); drawPositions(); renderLvlBox();
     $('#symSub').textContent = [d.name, d.tv || d.symbol, S.market.toUpperCase(), S.tf, d.feed ? 'feed: ' + d.feed : ''].filter(Boolean).join(' · ');
     if (d.priceNote && d.priceNote.startsWith('futures')) { const m = $('#chartMsg'); m.textContent = 'Spot price feed is busy — showing futures prices for now (slightly higher than spot). Chart is set to futures so levels match.'; m.classList.remove('hidden'); }
-    if (d.limited) { const m = $('#chartMsg'); m.textContent = 'CSE history is limited right now — the chart fills in as live prices come in. The TradingView chart shows the full CSE history. AI analysis still uses the day range and 52-week levels.'; m.classList.remove('hidden'); }
+    if (d.limited) { const m = $('#chartMsg'); m.textContent = 'CSE history is limited right now — the chart fills in as live prices come in. Switch to the TradingView live tab for the full CSE history. AI analysis still uses the day range and 52-week levels.'; m.classList.remove('hidden'); }
     startLive();
   } catch (e) {
     $('#symSub').textContent = 'Error';
@@ -512,7 +539,7 @@ async function loadMarket(opts = {}) {
     clearTimeout(S.reloadT);
     S.reloadT = setTimeout(() => { if (`${S.market}|${S.symbol}|${S.tf}` === key && !S.candles.length) loadMarket(); }, 25000);
   }
-  setView('tv');
+  setView();
   await loadNews();
 }
 function onTick(c) {
@@ -994,7 +1021,7 @@ function createPosition(accKey, s, { entry, sl, tp1, tp2, units, market = false,
   };
   S.accounts[accKey].positions.push(pos); saveAccounts();
   if (isM) chartEvent(pos, 'Entry', 'entry');
-  drawPositions();
+  drawPositions(); S.lvlHidden = false; renderLvlBox();
   return pos;
 }
 function closePart(pos, price, units, reason) {
@@ -1237,7 +1264,8 @@ function wire() {
     clearTimeout(sTimer); sTimer = setTimeout(() => doSearch(v), 280);
   };
   $('#symbolInput').onfocus = () => { if (!S.searchHits) doSearch(''); };
-  $('#lvlBox').onclick = e => { if (e.target.closest('[data-lb-close]')) $('#lvlBox').classList.add('hidden'); };
+  $('#lvlBox').onclick = e => { if (e.target.closest('[data-lb-close]')) { S.lvlHidden = true; renderLvlBox(); } };
+  $('.chart-tabs').onclick = e => { const b = e.target.closest('button'); if (b) setView(b.dataset.view); };
 
   // account
   $('#acctSeg').onclick = e => { const b = e.target.closest('button'); if (b) setActive(b.dataset.acc); };
@@ -1414,7 +1442,7 @@ function liveCheck(px) {
     .forEach(p => { const b = sig(p); processPosition(p, [c], true); if (sig(p) !== b) changed = true; }));
   if (changed) { saveSignals(); saveAccounts(); renderSignals(); renderAcctCard(); }
   const now = Date.now();
-  if (changed || now - lastTickRender > 1000) { lastTickRender = now; renderAccounts(); drawPositions(changed); }
+  if (changed || now - lastTickRender > 1000) { lastTickRender = now; renderAccounts(); drawPositions(changed); renderLvlBox(); }
 }
 
 /* ---------------- boot ---------------- */
