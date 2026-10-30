@@ -131,16 +131,46 @@ function tvForYahoo(ys) {
 
 /* GOLD: real-time candles from Binance PAXG (1 PAXG = 1 oz gold, no 10-min delay like COMEX on Yahoo),
    shifted to the live spot price so levels match OANDA:XAUUSD / your broker. */
+/* Live spot gold ticks (every 5s while someone is watching) → accurate 1m candles with real wicks */
+const goldTicks = []; let goldTimer = null, goldWant = 0;
+function wantGoldTicks() {
+  goldWant = Date.now();
+  if (goldTimer) return;
+  const tick = async () => {
+    if (Date.now() - goldWant > 10 * 60 * 1000) { clearInterval(goldTimer); goldTimer = null; return; }
+    try {
+      const j = await fetchJSON('https://api.gold-api.com/price/XAU', {}, 4500);
+      if (+j.price > 0) { goldTicks.push({ t: Math.floor(Date.now() / 1000), p: +j.price }); if (goldTicks.length > 30000) goldTicks.splice(0, 10000); }
+    } catch (_) { }
+  };
+  tick(); goldTimer = setInterval(tick, 5000);
+}
+function goldTickCandles() {
+  return aggregate(goldTicks.map(x => ({ time: x.t, open: x.p, high: x.p, low: x.p, close: x.p, volume: 0 })), 60);
+}
 async function goldSpotCandles(tf, limit) {
+  wantGoldTicks();
   const k = await cryptoCandles('PAXGUSDT', tf, limit);
   if (!k.candles.length) throw new Error('no PAXG data');
   const last = k.candles[k.candles.length - 1].close;
   let spot = null;
-  try { const j = await cached('goldapi', 8000, () => fetchJSON('https://api.gold-api.com/price/XAU', {}, 6000)); spot = +j.price || null; } catch (_) { }
+  const lt = goldTicks[goldTicks.length - 1];
+  if (lt && Date.now() / 1000 - lt.t < 20) spot = lt.p;
+  else { try { const j = await cached('goldapi', 8000, () => fetchJSON('https://api.gold-api.com/price/XAU', {}, 6000)); spot = +j.price || null; } catch (_) { } }
   if (spot && Math.abs(spot - last) / last < 0.03) lastBasis.PAXG = { b: spot - last, t: Date.now() };
   const lb = lastBasis.PAXG, b = lb && Date.now() - lb.t < 60 * 60 * 1000 ? lb.b : 0;
-  const candles = k.candles.map(c => ({ ...c, open: c.open + b, high: c.high + b, low: c.low + b, close: c.close + b }));
-  return { symbol: 'XAUUSD', tv: 'OANDA:XAUUSD', currency: 'USD', name: 'Gold spot (XAU/USD)', priceNote: 'spot', candles };
+  let candles = k.candles.map(c => ({ ...c, open: c.open + b, high: c.high + b, low: c.low + b, close: c.close + b }));
+  let feed = b ? 'PAXG + spot adjust' : 'PAXG (spot feed down)';
+  if (tf === '1m') {
+    // replace with true spot candles where we have ticks (skip the first, partial minute)
+    const tc = goldTickCandles().slice(1);
+    if (tc.length) {
+      const from = tc[0].time;
+      candles = candles.filter(c => c.time < from).concat(tc).slice(-limit);
+      feed = 'live spot ticks';
+    }
+  }
+  return { symbol: 'XAUUSD', tv: 'OANDA:XAUUSD', currency: 'USD', name: 'Gold spot (XAU/USD)', priceNote: 'spot', feed, candles };
 }
 
 async function yahooCandles(symbol, market, tf, limit) {
@@ -259,6 +289,18 @@ async function cseCandles(symbol, tf, limit) {
 
 /* ---------- routes ---------- */
 app.get('/api/health', (_, res) => res.json({ ok: true, time: Date.now() }));
+
+// Open https://<your-app>.onrender.com/api/diag to see which data feeds work from the server
+app.get('/api/diag', async (_, res) => {
+  const test = async (name, fn) => { const t = Date.now(); try { const v = await fn(); return { name, ok: true, ms: Date.now() - t, sample: v }; } catch (e) { return { name, ok: false, ms: Date.now() - t, error: e.message }; } };
+  const out = await Promise.all([
+    test('Binance (crypto + gold)', async () => (await cryptoCandles('PAXGUSDT', '1m', 2)).candles.at(-1).close),
+    test('Gold spot (gold-api.com)', async () => (await fetchJSON('https://api.gold-api.com/price/XAU', {}, 6000)).price),
+    test('Yahoo (forex + stocks)', async () => { const d = await fetchJSON('https://query1.finance.yahoo.com/v8/finance/chart/EURUSD=X?interval=1m&range=1d'); return d.chart.result[0].meta.regularMarketPrice; }),
+    test('CSE (cse.lk)', async () => (await csePost('marketStatus', '')).status),
+  ]);
+  res.json({ region: process.env.RENDER_REGION || 'unknown', goldTicks: goldTicks.length, feeds: out });
+});
 
 app.get('/api/candles', async (req, res) => {
   const market = (req.query.market || 'crypto').toLowerCase();
