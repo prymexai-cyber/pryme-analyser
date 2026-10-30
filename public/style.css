@@ -292,3 +292,12 @@ td.acts{display:flex;gap:4px;justify-content:flex-end}
 .chart-legend .l::before{content:'';display:inline-block;width:10px;height:2px;margin-right:5px;vertical-align:middle;background:currentColor}
 .tv-link{color:var(--muted);text-decoration:none;border:1px solid var(--line2);border-radius:7px;padding:2px 7px}
 .tv-link:hover{color:var(--text)}
+
+/* tabs + positions over TradingView */
+.chart-tabs{border-top:1px solid var(--line)}
+.chart-area{border-top:0}
+#tvWrap iframe{width:100%;height:100%;border:0;display:block}
+.lvl-box{bottom:52px;max-width:min(330px,calc(100% - 20px))}
+.lb-pos{border-top:1px solid var(--line);margin-top:6px;padding-top:6px}
+.lb-pos .r{font-size:11.5px}
+.lb-pos .tag{font-size:10px;padding:2px 5px}
