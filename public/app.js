@@ -353,7 +353,7 @@ function drawSeries() {
   const ln = arr => cs.map((c, i) => arr[i] == null ? null : { time: c.time, value: arr[i] }).filter(Boolean);
   e20S.setData(ln(I.series.e20)); e50S.setData(ln(I.series.e50)); e200S.setData(ln(I.series.e200));
 }
-function clearLines() { S.priceLines.forEach(l => { try { candleS.removePriceLine(l); } catch { } }); S.priceLines = []; candleS.setMarkers([]); }
+function clearLines() { S.priceLines.forEach(l => { try { candleS.removePriceLine(l); } catch { } }); S.priceLines = []; S.setupMarker = null; updateMarkers(); }
 function drawSetupLines(idx) {
   clearLines();
   const s = S.setups[idx]; if (!s) return;
@@ -367,7 +367,8 @@ function drawSetupLines(idx) {
   // faint lines for other setups' entries
   S.setups.forEach((o, i) => { if (i !== idx) add(o.entry, 'rgba(78,168,255,.35)', `#${i + 1}`, 1, 1); });
   const last = S.candles[S.candles.length - 1];
-  candleS.setMarkers([{ time: last.time, position: s.direction === 'long' ? 'belowBar' : 'aboveBar', color: s.direction === 'long' ? '#19e3a2' : '#ff4d6d', shape: s.direction === 'long' ? 'arrowUp' : 'arrowDown', text: s.direction === 'long' ? 'BUY' : 'SELL' }]);
+  S.setupMarker = { time: last.time, position: s.direction === 'long' ? 'belowBar' : 'aboveBar', color: s.direction === 'long' ? '#19e3a2' : '#ff4d6d', shape: s.direction === 'long' ? 'arrowUp' : 'arrowDown', text: `#${idx + 1} ${s.direction === 'long' ? 'BUY' : 'SELL'}` };
+  updateMarkers(); drawBoxes();
   $$('.setup').forEach((el, i) => el.classList.toggle('sel', i === idx));
   renderLvlBox();
 }
@@ -391,26 +392,86 @@ function renderLvlBox() {
 function tvSymbol() {
   if (S.meta && S.meta.tv) return S.meta.tv;
   const s = S.symbol.toUpperCase();
-  if (S.market === 'crypto') return 'BINANCE:' + s.replace(/[^A-Z0-9]/g, '');
+  if (S.market === 'crypto') return 'BINANCE:' + normCrypto(s);
   if (S.market === 'cse') return 'CSELK:' + (s.includes('.') ? s : s + '.N0000');
   if (S.market === 'forex') {
     const m = { XAUUSD: 'OANDA:XAUUSD', XAGUSD: 'OANDA:XAGUSD', NAS100: 'OANDA:NAS100USD', US30: 'OANDA:US30USD', SPX500: 'OANDA:SPX500USD', USOIL: 'TVC:USOIL' };
-    return m[s] || 'FX:' + s.replace('/', '');
+    return m[s] || 'FX_IDC:' + s.replace('/', '');
   }
   return s;
 }
-function setView(v) {
-  S.view = 'tv';
-  {
-    const src = `https://s.tradingview.com/widgetembed/?frameElementId=tvf&symbol=${encodeURIComponent(tvSymbol())}&interval=${TV_INT[S.tf]}&theme=dark&style=1&timezone=Asia%2FColombo&withdateranges=1&allow_symbol_change=1&saveimage=0&studies=%5B%5D&locale=en`;
-    const w = $('#tvWrap');
-    if (w.dataset.src !== src) { w.innerHTML = `<iframe src="${src}" allowfullscreen loading="lazy"></iframe>`; w.dataset.src = src; }
-  }
+function setView() {
+  // one live chart (TradingView Lightweight Charts) — positions are drawn on it. Link opens the full TradingView chart.
+  S.view = 'pryme';
+  const a = $('#tvLink'); if (a) a.href = 'https://www.tradingview.com/chart/?symbol=' + encodeURIComponent(tvSymbol());
 }
 
 /* ---------------- data loading / live ---------------- */
+/* Binance is called straight from the browser (your own IP) so the shared Render server never gets banned. */
+const BN_HOSTS = ['https://data-api.binance.vision', 'https://api.binance.com', 'https://api1.binance.com'];
+const bnCache = new Map();
+function normCrypto(s) {
+  s = String(s).toUpperCase().replace(/[^A-Z0-9]/g, '');
+  if (!/(USDT|USDC|BTC|ETH|FDUSD|BUSD)$/.test(s)) s += 'USDT';
+  return s;
+}
+async function bnGet(path, ttl = 4000) {
+  const hit = bnCache.get(path);
+  if (hit && Date.now() - hit.t < ttl) return hit.v;
+  let lastErr;
+  for (const h of BN_HOSTS) {
+    try {
+      const r = await fetch(h + path);
+      if (!r.ok) throw new Error('Binance HTTP ' + r.status);
+      const v = await r.json();
+      bnCache.set(path, { t: Date.now(), v });
+      if (bnCache.size > 80) bnCache.delete(bnCache.keys().next().value);
+      return v;
+    } catch (e) { lastErr = e; }
+  }
+  throw lastErr;
+}
+async function binanceKlines(sym, tf, limit) {
+  const rows = await bnGet(`/api/v3/klines?symbol=${sym}&interval=${tf}&limit=${Math.min(limit, 1000)}`, tf === '1m' ? 4000 : 8000);
+  return rows.map(r => ({ time: Math.floor(r[0] / 1000), open: +r[1], high: +r[2], low: +r[3], close: +r[4], volume: +r[5] }));
+}
+const isGold = s => ['XAUUSD', 'GOLD'].includes(String(s).toUpperCase());
+let goldBasis = null;
+async function goldClientCandles(tf, limit) {
+  const [raw, gs] = await Promise.all([binanceKlines('PAXGUSDT', tf, limit), getJSON('/api/goldspot' + (tf === '1m' ? '?m1=1' : '')).catch(() => ({}))]);
+  if (!raw.length) throw new Error('no PAXG data');
+  const last = raw[raw.length - 1].close;
+  if (gs.spot && Math.abs(gs.spot - last) / last < 0.03) goldBasis = gs.spot - last;
+  const b = goldBasis ?? 0;
+  let candles = raw.map(c => ({ ...c, open: c.open + b, high: c.high + b, low: c.low + b, close: c.close + b }));
+  let feed = goldBasis != null ? 'PAXG + spot adjust' : 'PAXG (spot feed down)';
+  if (tf === '1m' && gs.candles1m?.length) {
+    const from = gs.candles1m[0].time;
+    candles = candles.filter(c => c.time < from).concat(gs.candles1m).slice(-limit);
+    feed = 'live spot ticks';
+  }
+  return { symbol: 'XAUUSD', tv: 'OANDA:XAUUSD', currency: 'USD', name: 'Gold spot (XAU/USD)', priceNote: 'spot', feed, candles };
+}
 async function fetchCandles(market, symbol, tf, limit = 500) {
+  if (market === 'crypto') {
+    try { const s = normCrypto(symbol); return { symbol: s, tv: 'BINANCE:' + s, feed: 'Binance live', candles: await binanceKlines(s, tf, limit) }; }
+    catch (e) { /* fall back to server below */ }
+  }
+  if (market === 'forex' && isGold(symbol)) {
+    try { return await goldClientCandles(tf, limit); } catch (e) { /* fall back to server */ }
+  }
   return getJSON(`/api/candles?market=${market}&symbol=${encodeURIComponent(symbol)}&tf=${tf}&limit=${limit}`);
+}
+let cryptoList = null;
+async function searchCryptoLocal(q) {
+  if (!cryptoList) {
+    const rows = await bnGet('/api/v3/ticker/price', 6 * 3600 * 1000);
+    cryptoList = rows.map(r => r.symbol).filter(s => /USDT$/.test(s)).sort();
+  }
+  const qq = q.toUpperCase().replace(/[^A-Z0-9]/g, '');
+  const pri = ['BTCUSDT', 'ETHUSDT', 'SOLUSDT', 'BNBUSDT', 'XRPUSDT', 'DOGEUSDT'];
+  const list = qq ? cryptoList.filter(s => s.startsWith(qq)).concat(cryptoList.filter(s => !s.startsWith(qq) && s.includes(qq))) : pri.concat(cryptoList.filter(s => !pri.includes(s)));
+  return list.slice(0, 30).map(s => ({ symbol: s, name: s.replace(/USDT$/, '') + ' / Tether' }));
 }
 function setLive(on, label) { const p = $('#livePill'); p.classList.toggle('on', on); p.querySelector('span').textContent = label || (on ? 'LIVE' : 'OFFLINE'); }
 function stopLive() { if (S.ws) { try { S.ws.close(); } catch { } S.ws = null; } clearInterval(S.poll); }
@@ -418,8 +479,11 @@ function stopLive() { if (S.ws) { try { S.ws.close(); } catch { } S.ws = null; }
 async function loadMarket(opts = {}) {
   stopLive(); clearLines();
   S.setups = []; S.selected = null; renderResult(null); $('#lvlBox').classList.add('hidden');
+  S.meta = {}; S.candles = []; S.ind = null;
+  $('#lastPrice').textContent = '—'; $('#lastChg').textContent = ''; $('#indRow').innerHTML = '';
   $('#symTitle').textContent = S.symbol.toUpperCase();
   $('#symSub').textContent = 'Loading data…';
+  setView('tv'); // show the right TradingView chart straight away
   $('#chartMsg').classList.add('hidden');
   setLive(false, 'LOADING');
   try {
@@ -429,29 +493,38 @@ async function loadMarket(opts = {}) {
     if (S.candles.length < 30 && S.market !== 'cse') throw new Error('Not enough data for this symbol/timeframe.');
     if (!S.candles.length) throw new Error('No price data returned.');
     S.ind = analyseIndicators(S.candles);
+    S.loadedKey = `${S.market}|${S.symbol.toUpperCase()}`;
     drawSeries(); chart.timeScale().fitContent();
     if (S.candles.length > 150) chart.timeScale().setVisibleLogicalRange({ from: S.candles.length - 150, to: S.candles.length + 8 });
-    updateHeader(); renderIndicators();
+    updateHeader(); renderIndicators(); updateMarkers(); drawPositions();
     $('#symSub').textContent = [d.name, d.tv || d.symbol, S.market.toUpperCase(), S.tf, d.feed ? 'feed: ' + d.feed : ''].filter(Boolean).join(' · ');
     if (d.priceNote && d.priceNote.startsWith('futures')) { const m = $('#chartMsg'); m.textContent = 'Spot price feed is busy — showing futures prices for now (slightly higher than spot). Chart is set to futures so levels match.'; m.classList.remove('hidden'); }
     if (d.limited) { const m = $('#chartMsg'); m.textContent = 'CSE history is limited right now — the chart fills in as live prices come in. The TradingView chart shows the full CSE history. AI analysis still uses the day range and 52-week levels.'; m.classList.remove('hidden'); }
     startLive();
   } catch (e) {
     $('#symSub').textContent = 'Error';
-    const m = $('#chartMsg'); m.textContent = 'Could not load data: ' + e.message + ' — check the symbol and try again.'; m.classList.remove('hidden');
+    const m = $('#chartMsg'); m.textContent = 'Could not load data: ' + e.message + ' — retrying automatically…'; m.classList.remove('hidden');
+    getJSON('/api/diag').then(d => { if (!S.candles.length) m.textContent += '  Server feeds: ' + (d.feeds || []).map(f => `${f.name} ${f.ok ? '✓' : '✗'}`).join(' · '); }).catch(() => { });
     setLive(false, 'ERROR');
+    S.loadedKey = null;
+    // try again automatically (backup feeds may take over)
+    const key = `${S.market}|${S.symbol}|${S.tf}`;
+    clearTimeout(S.reloadT);
+    S.reloadT = setTimeout(() => { if (`${S.market}|${S.symbol}|${S.tf}` === key && !S.candles.length) loadMarket(); }, 25000);
   }
   setView('tv');
   await loadNews();
 }
 function onTick(c) {
   const cs = S.candles; const last = cs[cs.length - 1];
+  const newest = !last || c.time >= last.time;
   if (last && c.time === last.time) cs[cs.length - 1] = c; else if (!last || c.time > last.time) cs.push(c);
   candleS.update({ time: c.time, open: c.open, high: c.high, low: c.low, close: c.close });
   volS.update({ time: c.time, value: c.volume || 0, color: c.close >= c.open ? 'rgba(25,227,162,.25)' : 'rgba(255,77,109,.25)' });
   S.livePrices[S.market + '|' + S.symbol.toUpperCase()] = c.close;
   updateHeader();
   if (S.selected != null) renderLvlBox();
+  if (newest) liveCheck(c.close);
 }
 function startLive() {
   if (S.market === 'crypto') {
@@ -601,7 +674,7 @@ async function htfInfo() {
 }
 
 async function runAnalysis() {
-  if (!S.candles.length) { toast('Load a chart first'); return; }
+  if (!S.candles.length || S.loadedKey !== `${S.market}|${S.symbol.toUpperCase()}`) { toast('Chart data not loaded for this symbol yet — wait a moment'); return; }
   const btn = $('#btnAnalyse'); btn.classList.add('busy'); btn.querySelector('.btn-label').textContent = 'Analysing…';
   const st = $('#aiStatus'); st.className = 'ai-status'; st.textContent = 'Reading structure, indicators, higher timeframe and news…';
   try {
@@ -749,7 +822,7 @@ function newSignalBatch() {
     const g = {
       id: uid(), batch: S.batch, idx: i, market: S.market, symbol: sym, tf: S.tf, dir: s.direction, type, name: s.name,
       conf: s.confidence, grade: s.grade, entry: isM ? price : s.entry, sl: s.stopLoss, sl0: s.stopLoss, tp1: s.tp1, tp2: s.tp2, tp3: s.tp3,
-      prec: S.prec, status: isM ? 'active' : 'waiting', created: Date.now(), lastBar: null
+      prec: S.prec, status: isM ? 'active' : 'waiting', created: Date.now(), lastBar: startBar(Date.now()) + 60
     };
     S.signals.push(g); s.sigId = g.id;
   });
@@ -762,11 +835,11 @@ function newSignalBatch() {
 function recordStat(g, win) {
   S.sigStats.push({ symbol: g.symbol, market: g.market, dir: g.dir, type: g.type, name: g.name, grade: g.grade, win, t: Date.now() });
 }
-function processSignal(g, candles) {
+function processSignal(g, candles, live = false) {
   const sg = g.dir === 'long' ? 1 : -1;
   const events = [];
-  // candle-based: re-check the still-forming candle, never skip delayed/missed candles
-  for (const c of candles.filter(c => c.time >= (g.lastBar ?? startBar(g.created)))) {
+  // candle-based: re-check the still-forming candle, never skip delayed/missed candles. live = a single real-time tick.
+  for (const c of (live ? candles : candles.filter(c => c.time >= (g.lastBar ?? startBar(g.created))))) {
     const tol = tolFor(g.market, c.close);
     if (g.status === 'waiting') {
       const fill = (g.type === 'BUY LIMIT' && c.low <= g.entry) || (g.type === 'BUY STOP' && c.high >= g.entry) ||
@@ -783,10 +856,10 @@ function processSignal(g, candles) {
     }
     if (g.status === 'tp1') {
       if (hit(g.tp2)) { g.status = 'tp2'; events.push('tp2'); break; }
-      if (!justHit && c.time > (g.tp1At ?? 0) && (sg > 0 ? c.low <= g.sl - tol : c.high >= g.sl + tol)) { g.status = 'be'; events.push('be'); break; }
+      if (!justHit && (live || c.time > (g.tp1At ?? 0)) && (sg > 0 ? c.low <= g.sl - tol : c.high >= g.sl + tol)) { g.status = 'be'; events.push('be'); break; }
     }
   }
-  if (candles.length) g.lastBar = Math.max(g.lastBar ?? 0, candles[candles.length - 1].time);
+  if (candles.length && !live) g.lastBar = Math.max(g.lastBar ?? 0, candles[candles.length - 1].time);
   if (g.status === 'waiting' && Date.now() - g.created > S.settings.auto.expiryBars * (TF_SEC[g.tf] || 900) * 1000) { g.status = 'expired'; events.push('expired'); }
   events.forEach(e => onSignalEvent(g, e));
 }
@@ -917,9 +990,11 @@ function createPosition(accKey, s, { entry, sl, tp1, tp2, units, market = false,
     id: uid(), acc: accKey, market: S.market, symbol: S.symbol.toUpperCase(), tf: S.tf, dir: s.direction, type,
     entry: isM ? price : entry, sl, tp1, tp2, units, remaining: units, cur: curOf(S.market),
     factor: quoteFactor(S.market, S.symbol, entry), status: isM ? 'open' : 'pending', created: Date.now(), opened: isM ? Date.now() : null,
-    realized: 0, tp1Hit: false, lastBar: null, prec: S.prec, name: s.name, auto, batch: S.batch, sigId: s.sigId
+    realized: 0, tp1Hit: false, lastBar: startBar(Date.now()) + 60, prec: S.prec, name: s.name, auto, batch: S.batch, sigId: s.sigId
   };
   S.accounts[accKey].positions.push(pos); saveAccounts();
+  if (isM) chartEvent(pos, 'Entry', 'entry');
+  drawPositions();
   return pos;
 }
 function closePart(pos, price, units, reason) {
@@ -935,31 +1010,35 @@ function closePart(pos, price, units, reason) {
   addLog(`${ACC_LABEL[pos.acc]} ${pos.symbol} ${reason}: ${pnl >= 0 ? '+' : ''}${money(pnl, pos.cur)} → balance ${money(acc[pos.cur], pos.cur)}${pos.acc === 'real' ? ' (check with broker)' : ''}`);
   toast(`${ACC_LABEL[pos.acc]} ${pos.symbol} ${reason}: ${pnl >= 0 ? '+' : ''}${money(pnl, pos.cur)}`, 4000);
   const kind = reason.startsWith('TP2') ? 'tp2' : reason.startsWith('TP1') ? 'tp1' : reason.startsWith('Stop') ? 'sl' : reason.startsWith('Break') ? 'be' : 'manual';
+  chartEvent(pos, { tp1: 'TP1 ✓', tp2: 'TP2 ✓', sl: 'SL ✗', be: 'BE', manual: 'Closed' }[kind], { tp1: 'tp', tp2: 'tp', sl: 'sl', be: 'be', manual: 'be' }[kind]);
+  drawPositions();
   if (['tp1', 'tp2', 'sl'].includes(kind)) notify(`Pryme ${ACC_LABEL[pos.acc]}: ${pos.symbol} ${reason}`, `${pnl >= 0 ? '+' : ''}${money(pnl, pos.cur)}`);
   const A = S.settings.auto;
   if ((kind === 'tp1' && A.trigger === 'tp1') || ((kind === 'tp2' || kind === 'be') && A.trigger === 'tp2') || (kind === 'sl' && A.onSL))
     requestNext(pos.batch, pos.market, pos.symbol, pos.tf, `${ACC_LABEL[pos.acc]} ${pos.symbol} ${reason}`);
 }
-function processPosition(pos, candles) {
+function processPosition(pos, candles, live = false) {
   const sg = pos.dir === 'long' ? 1 : -1;
-  for (const c of candles.filter(c => c.time >= (pos.lastBar ?? startBar(pos.created)))) {
+  for (const c of (live ? candles : candles.filter(c => c.time >= (pos.lastBar ?? startBar(pos.created))))) {
     if (pos.status === 'pending') {
       const fill = (pos.type === 'BUY LIMIT' && c.low <= pos.entry) || (pos.type === 'BUY STOP' && c.high >= pos.entry) ||
         (pos.type === 'SELL LIMIT' && c.high >= pos.entry) || (pos.type === 'SELL STOP' && c.low <= pos.entry);
       if (!fill) continue;
       pos.status = 'open'; pos.opened = Date.now();
       addLog(`${ACC_LABEL[pos.acc]} ${pos.symbol} ${pos.type} filled at ${fmt(pos.entry, pos.prec)}.`);
+      toast(`${ACC_LABEL[pos.acc]} ${pos.symbol} ${pos.type} filled at ${fmt(pos.entry, pos.prec)}`);
+      chartEvent(pos, 'Entry', 'entry');
     }
     if (pos.status !== 'open') break;
     const tol = tolFor(pos.market, c.close);
     // before TP1: SL with allowance. After TP1 (stop at entry): needs a clear move back through entry.
     const hitSL = pos.tp1Hit ? (sg > 0 ? c.low <= pos.sl - tol : c.high >= pos.sl + tol) : (sg > 0 ? c.low <= pos.sl + tol : c.high >= pos.sl - tol);
     // after TP1 the stop is at entry; don't judge it on the same candle that hit TP1
-    if (hitSL && !(pos.tp1Hit && c.time <= (pos.tp1At ?? 0))) { closePart(pos, pos.sl, pos.remaining, pos.tp1Hit ? 'Break-even stop' : 'Stop loss hit'); break; }
+    if (hitSL && (live || !(pos.tp1Hit && c.time <= (pos.tp1At ?? 0)))) { closePart(pos, pos.sl, pos.remaining, pos.tp1Hit ? 'Break-even stop' : 'Stop loss hit'); break; }
     if (!pos.tp1Hit && (sg > 0 ? c.high >= pos.tp1 - tol : c.low <= pos.tp1 + tol)) { pos.tp1Hit = true; pos.tp1At = c.time; closePart(pos, pos.tp1, pos.units / 2, 'TP1 hit (half closed, SL → entry)'); pos.sl = pos.entry; }
     if (pos.status === 'open' && (sg > 0 ? c.high >= pos.tp2 - tol : c.low <= pos.tp2 + tol)) { closePart(pos, pos.tp2, pos.remaining, 'TP2 hit'); break; }
   }
-  if (candles.length) pos.lastBar = Math.max(pos.lastBar ?? 0, candles[candles.length - 1].time);
+  if (candles.length && !live) pos.lastBar = Math.max(pos.lastBar ?? 0, candles[candles.length - 1].time);
 }
 
 /* ---------- live monitor (signals + both accounts) ---------- */
@@ -987,9 +1066,17 @@ async function monitor() {
         }
       } catch { continue; }
       if (!candles.length) continue;
-      S.livePrices[k] = candles[candles.length - 1].close;
-      sigs.filter(g => g.market + '|' + g.symbol === k).forEach(g => processSignal(g, candles));
-      pos.filter(p => p.market + '|' + p.symbol === k).forEach(p => processPosition(p, candles));
+      const px = candles[candles.length - 1].close;
+      S.livePrices[k] = px;
+      // drop broken items whose levels are nowhere near this symbol's real price (old bug: wrong chart data)
+      const broken = x => Math.abs(x.entry - px) / px > 0.3;
+      sigs.filter(g => g.market + '|' + g.symbol === k && broken(g)).forEach(g => { g.status = 'replaced'; addLog(`${g.symbol}: removed an invalid signal (levels didn't match the real price).`); });
+      ['demo', 'real'].forEach(a => {
+        const bad = S.accounts[a].positions.filter(p => p.market + '|' + p.symbol === k && broken(p));
+        if (bad.length) { S.accounts[a].positions = S.accounts[a].positions.filter(p => !bad.includes(p)); addLog(`${ACC_LABEL[a]} ${k.split('|')[1]}: removed ${bad.length} invalid trade(s) — no P/L applied.`); }
+      });
+      sigs.filter(g => g.market + '|' + g.symbol === k && g.status !== 'replaced').forEach(g => processSignal(g, candles));
+      pos.filter(p => p.market + '|' + p.symbol === k && S.accounts[p.acc].positions.includes(p)).forEach(p => processPosition(p, candles));
     }
     saveSignals(); saveAccounts();
   } finally {
@@ -1136,9 +1223,11 @@ function wire() {
   const doSearch = async q => {
     const my = ++sSeq;
     try {
-      const d = await getJSON(`/api/search?market=${S.market}&q=${encodeURIComponent(q)}`);
+      let items;
+      if (S.market === 'crypto') { try { items = await searchCryptoLocal(q); } catch { } }
+      if (!items) items = (await getJSON(`/api/search?market=${S.market}&q=${encodeURIComponent(q)}`)).items;
       if (my !== sSeq) return;
-      S.searchHits = d.items || [];
+      S.searchHits = items || [];
       $('#symbolList').innerHTML = S.searchHits.map(x => `<option value="${esc(x.symbol)}">${esc(x.name || '')}</option>`).join('');
     } catch { }
   };
@@ -1237,6 +1326,97 @@ function wire() {
   document.addEventListener('visibilitychange', () => { if (!document.hidden) monitor(); });
 }
 
+/* ---------------- positions on the live chart ---------------- */
+S.chartEvents = store.get('pa_events', []);
+const saveEvents = () => store.set('pa_events', S.chartEvents.slice(-300));
+let posLines = [], lastPosDraw = 0, lastTickRender = 0;
+function chartItems() {
+  const sym = S.symbol.toUpperCase(), out = [];
+  ['demo', 'real'].forEach(a => S.accounts[a].positions.forEach(p => { if (p.market === S.market && p.symbol === sym && p.status !== 'closed') out.push(p); }));
+  return out;
+}
+const plOf = (p, px) => (px - p.entry) * (p.dir === 'long' ? 1 : -1) * p.remaining * p.factor + p.realized;
+function drawPositions(force = true) {
+  if (!candleS) return;
+  const now = Date.now(); if (!force && now - lastPosDraw < 700) return; lastPosDraw = now;
+  posLines.forEach(l => { try { candleS.removePriceLine(l); } catch { } }); posLines = [];
+  const px = S.candles.length ? S.candles[S.candles.length - 1].close : null;
+  const add = (price, color, title, style = 0, w = 2) => posLines.push(candleS.createPriceLine({ price, color, lineWidth: w, lineStyle: style, axisLabelVisible: true, title }));
+  chartItems().forEach(p => {
+    const side = p.dir === 'long' ? 'BUY' : 'SELL', A = p.acc === 'real' ? 'REAL' : 'DEMO';
+    const pl = px != null && p.status === 'open' ? plOf(p, px) : null;
+    const lbl = p.status === 'pending' ? `${A} ${p.type}` : `${A} ${side} ${(+p.remaining).toPrecision(3)}${pl != null ? `  ${pl >= 0 ? '+' : ''}${money(pl, p.cur)}` : ''}`;
+    add(p.entry, p.status === 'pending' ? '#8892a4' : '#4ea8ff', lbl, p.status === 'pending' ? 2 : 0, 2);
+    add(p.sl, '#ff4d6d', p.tp1Hit ? 'SL (BE)' : 'SL', 0, 1);
+    if (!p.tp1Hit) add(p.tp1, '#19e3a2', 'TP1', 2, 1);
+    add(p.tp2, '#19e3a2', 'TP2', 2, 1);
+  });
+  drawBoxes();
+}
+function barAtOrBefore(t) {
+  const cs = S.candles; if (!cs.length) return null;
+  if (t <= cs[0].time) return cs[0].time;
+  for (let i = cs.length - 1; i >= 0; i--) if (cs[i].time <= t) return cs[i].time;
+  return cs[0].time;
+}
+function drawBoxes() { try { drawBoxesInner(); } catch { } }
+function drawBoxesInner() {
+  const layer = $('#posLayer'); if (!layer || !chart || !S.candles.length) { if (layer) layer.innerHTML = ''; return; }
+  const ts = chart.timeScale(), y = v => candleS.priceToCoordinate(v);
+  const w = $('#chart').clientWidth - chart.priceScale('right').width();
+  const box = (x, a, b, cls) => {
+    const ya = y(a), yb = y(b); if (ya == null || yb == null) return '';
+    return `<div class="pbox ${cls}" style="left:${x}px;top:${Math.min(ya, yb)}px;width:${Math.max(0, w - x)}px;height:${Math.abs(ya - yb)}px"></div>`;
+  };
+  let html = '';
+  const items = chartItems();
+  items.forEach(p => {
+    let x = ts.timeToCoordinate(barAtOrBefore(Math.floor((p.opened || p.created) / 1000)));
+    x = Math.max(0, Math.min(x ?? 0, w - 24));
+    html += box(x, p.entry, p.tp2, 'win') + box(x, p.entry, p.sl, 'loss');
+  });
+  const s = S.setups[S.selected];
+  if (s && !items.some(p => p.sigId && p.sigId === s.sigId)) {
+    const x = Math.max(0, w - 110);
+    html += box(x, s.entry, s.tp2, 'win prev') + box(x, s.entry, s.stopLoss, 'loss prev');
+  }
+  layer.innerHTML = html;
+}
+function updateMarkers() {
+  if (!candleS) return;
+  const tfs = TF_SEC[S.tf] || 900, sym = S.symbol.toUpperCase(), first = S.candles[0]?.time || 0;
+  const m = S.chartEvents.filter(e => e.market === S.market && e.symbol === sym && e.t >= first)
+    .map(e => ({ time: barAtOrBefore(Math.floor(e.t / tfs) * tfs) ?? e.t, position: e.pos, color: e.color, shape: e.shape, text: e.text }));
+  if (S.setupMarker) m.push(S.setupMarker);
+  m.sort((a, b) => a.time - b.time);
+  try { candleS.setMarkers(m); } catch { }
+}
+function chartEvent(x, text, kind) {
+  const long = x.dir === 'long';
+  S.chartEvents.push({
+    market: x.market, symbol: x.symbol, t: nowSec(), text: `${x.acc === 'real' ? 'R' : 'D'} ${text}`,
+    color: { tp: '#19e3a2', sl: '#ff4d6d', be: '#8892a4', entry: '#4ea8ff' }[kind],
+    pos: kind === 'entry' ? (long ? 'belowBar' : 'aboveBar') : (kind === 'tp' ? (long ? 'aboveBar' : 'belowBar') : (long ? 'belowBar' : 'aboveBar')),
+    shape: kind === 'entry' ? (long ? 'arrowUp' : 'arrowDown') : 'circle'
+  });
+  saveEvents();
+  if (x.market === S.market && x.symbol === S.symbol.toUpperCase()) updateMarkers();
+}
+// every live tick: check TP / SL / entries of this symbol instantly
+function liveCheck(px) {
+  const sym = S.symbol.toUpperCase();
+  const c = { time: startBar(Date.now()), open: px, high: px, low: px, close: px };
+  const sig = x => [x.status, x.tp1Hit, x.remaining].join('|');
+  let changed = false;
+  S.signals.filter(g => g.market === S.market && g.symbol === sym && ['waiting', 'active', 'tp1'].includes(g.status))
+    .forEach(g => { const b = sig(g); processSignal(g, [c], true); if (sig(g) !== b) changed = true; });
+  ['demo', 'real'].forEach(a => S.accounts[a].positions.filter(p => p.market === S.market && p.symbol === sym).slice()
+    .forEach(p => { const b = sig(p); processPosition(p, [c], true); if (sig(p) !== b) changed = true; }));
+  if (changed) { saveSignals(); saveAccounts(); renderSignals(); renderAcctCard(); }
+  const now = Date.now();
+  if (changed || now - lastTickRender > 1000) { lastTickRender = now; renderAccounts(); drawPositions(changed); }
+}
+
 /* ---------------- boot ---------------- */
 initChart();
 wire();
@@ -1245,3 +1425,5 @@ setAcctView(S.acctView);
 setMarket(S.market).then(renderSignals);
 renderLog(); renderSignals(); renderAcctCard();
 setInterval(monitor, 8000);
+chart.timeScale().subscribeVisibleLogicalRangeChange(() => drawBoxes());
+setInterval(drawBoxes, 600); // keeps boxes aligned when the price scale moves
