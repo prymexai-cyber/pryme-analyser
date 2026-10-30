@@ -423,7 +423,10 @@ function setView(v) {
   $('#chart').classList.toggle('hidden', tv);
   $('#posLayer').classList.toggle('hidden', tv);
   const a = $('#tvLink'); if (a) a.href = 'https://www.tradingview.com/chart/?symbol=' + encodeURIComponent(tvSymbol());
-  if (tv) {
+  const tb = $('.chart-tabs [data-view=tv]'); if (tb) tb.textContent = hasAdvanced() ? 'TradingView (positions)' : 'TradingView live';
+  if (tv && hasAdvanced()) {
+    ensureAdvanced();
+  } else if (tv) {
     const src = `https://s.tradingview.com/widgetembed/?frameElementId=tvf&symbol=${encodeURIComponent(tvSymbol())}&interval=${TV_INT[S.tf]}&theme=dark&style=1&timezone=Asia%2FColombo&withdateranges=1&allow_symbol_change=0&saveimage=0&studies=%5B%5D&locale=en`;
     const w = $('#tvWrap');
     if (w.dataset.src !== src) { w.innerHTML = `<iframe src="${src}" allowfullscreen></iframe>`; w.dataset.src = src; }
@@ -552,6 +555,7 @@ function onTick(c) {
   updateHeader();
   if (S.selected != null) renderLvlBox();
   if (newest) liveCheck(c.close);
+  tvForward(c);
 }
 function startLive() {
   if (S.market === 'crypto') {
@@ -1015,7 +1019,7 @@ function createPosition(accKey, s, { entry, sl, tp1, tp2, units, market = false,
   const isM = type.startsWith('MARKET');
   const pos = {
     id: uid(), acc: accKey, market: S.market, symbol: S.symbol.toUpperCase(), tf: S.tf, dir: s.direction, type,
-    entry: isM ? price : entry, sl, tp1, tp2, units, remaining: units, cur: curOf(S.market),
+    entry: isM ? price : entry, sl, sl0: sl, tp1, tp2, units, remaining: units, cur: curOf(S.market),
     factor: quoteFactor(S.market, S.symbol, entry), status: isM ? 'open' : 'pending', created: Date.now(), opened: isM ? Date.now() : null,
     realized: 0, tp1Hit: false, lastBar: startBar(Date.now()) + 60, prec: S.prec, name: s.name, auto, batch: S.batch, sigId: s.sigId
   };
@@ -1365,6 +1369,7 @@ function chartItems() {
 }
 const plOf = (p, px) => (px - p.entry) * (p.dir === 'long' ? 1 : -1) * p.remaining * p.factor + p.realized;
 function drawPositions(force = true) {
+  drawTvPositions();
   if (!candleS) return;
   const now = Date.now(); if (!force && now - lastPosDraw < 700) return; lastPosDraw = now;
   posLines.forEach(l => { try { candleS.removePriceLine(l); } catch { } }); posLines = [];
@@ -1443,6 +1448,116 @@ function liveCheck(px) {
   if (changed) { saveSignals(); saveAccounts(); renderSignals(); renderAcctCard(); }
   const now = Date.now();
   if (changed || now - lastTickRender > 1000) { lastTickRender = now; renderAccounts(); drawPositions(changed); renderLvlBox(); }
+}
+
+/* ================================================================
+   TradingView ADVANCED CHARTS (optional)
+   When public/charting_library/ exists, the "TradingView live" tab becomes a full TradingView
+   chart fed with Pryme's live data, and your trades are drawn on it with TradingView's own
+   Long / Short Position tool (entry, SL, TP box) + TP1 line + Entry / TP / SL markers.
+   ================================================================ */
+const hasAdvanced = () => !!(window.TradingView && window.TradingView.widget);
+const RES2TF = { '1': '1m', '5': '5m', '15': '15m', '30': '30m', '60': '1h', '240': '4h', 'D': '1d', '1D': '1d' };
+const TF2RES = { '1m': '1', '5m': '5', '15m': '15', '30m': '30', '1h': '60', '4h': '240', '1d': '1D' };
+let tvw = null, tvwReady = false, tvShapes = [], tvSig = '', tvSubs = {};
+const tvDatafeed = {
+  onReady: cb => setTimeout(() => cb({ supported_resolutions: Object.values(TF2RES), supports_marks: false, supports_timescale_marks: false, supports_time: true }), 0),
+  searchSymbols: async (input, _ex, _type, onResult) => {
+    try { const d = await getJSON(`/api/search?market=${S.market}&q=${encodeURIComponent(input)}`); onResult((d.items || []).map(x => ({ symbol: x.symbol, full_name: x.symbol, description: x.name || '', exchange: S.market.toUpperCase(), type: S.market }))); }
+    catch { onResult([]); }
+  },
+  resolveSymbol: (name, onResolve) => setTimeout(() => {
+    const prec = S.prec ?? 2;
+    onResolve({
+      name, ticker: name, description: (S.meta && S.meta.name) || name, type: S.market === 'crypto' ? 'crypto' : S.market === 'forex' ? 'forex' : 'stock',
+      session: '24x7', timezone: 'Etc/UTC', exchange: S.market.toUpperCase(), listed_exchange: S.market.toUpperCase(),
+      minmov: 1, pricescale: 10 ** prec, has_intraday: true, intraday_multipliers: ['1', '5', '15', '30', '60', '240'], has_daily: true,
+      supported_resolutions: Object.values(TF2RES), volume_precision: 2, data_status: 'streaming', format: 'price'
+    });
+  }, 0),
+  getBars: async (si, res, period, onResult, onError) => {
+    if (!period.firstDataRequest) return onResult([], { noData: true });
+    try {
+      const tf = RES2TF[res] || S.tf;
+      let cs = (si.name === S.symbol.toUpperCase() && tf === S.tf && S.candles.length) ? S.candles : (await fetchCandles(S.market, si.name, tf, 1000)).candles || [];
+      const bars = cs.filter(c => c.time <= period.to).map(c => ({ time: c.time * 1000, open: c.open, high: c.high, low: c.low, close: c.close, volume: c.volume || 0 }));
+      onResult(bars, { noData: !bars.length });
+    } catch (e) { onError(String(e.message || e)); }
+  },
+  subscribeBars: (si, res, onTick, uid) => { tvSubs[uid] = { sym: si.name, tf: RES2TF[res], onTick }; },
+  unsubscribeBars: uid => { delete tvSubs[uid]; }
+};
+function tvForward(c) {
+  Object.values(tvSubs).forEach(sub => {
+    if (sub.sym === S.symbol.toUpperCase() && sub.tf === S.tf) { try { sub.onTick({ time: c.time * 1000, open: c.open, high: c.high, low: c.low, close: c.close, volume: c.volume || 0 }); } catch { } }
+  });
+}
+function ensureAdvanced() {
+  const sym = S.symbol.toUpperCase(), res = TF2RES[S.tf];
+  if (tvw) {
+    if (tvwReady) {
+      const ch = tvw.activeChart();
+      if (ch.symbol() !== sym || ch.resolution() !== res) { tvSig = ''; tvw.setSymbol(sym, res, () => drawTvPositions()); }
+    }
+    return;
+  }
+  const w = $('#tvWrap'); w.dataset.src = 'advanced'; w.innerHTML = '<div id="tvAdv" style="width:100%;height:100%"></div>';
+  tvw = new window.TradingView.widget({
+    container: 'tvAdv', library_path: '/charting_library/', datafeed: tvDatafeed,
+    symbol: sym, interval: res, locale: 'en', theme: 'dark', autosize: true, timezone: 'Asia/Colombo',
+    disabled_features: ['use_localstorage_for_settings', 'header_symbol_search', 'header_compare', 'symbol_search_hot_key'],
+    overrides: { 'paneProperties.background': '#07090d', 'paneProperties.backgroundType': 'solid', 'mainSeriesProperties.candleStyle.upColor': '#19e3a2', 'mainSeriesProperties.candleStyle.downColor': '#ff4d6d', 'mainSeriesProperties.candleStyle.wickUpColor': '#19e3a2', 'mainSeriesProperties.candleStyle.wickDownColor': '#ff4d6d', 'mainSeriesProperties.candleStyle.borderVisible': false }
+  });
+  tvw.onChartReady(() => {
+    tvwReady = true; tvSig = ''; drawTvPositions();
+    try {
+      tvw.activeChart().onIntervalChanged().subscribe(null, iv => { const tf = RES2TF[iv]; if (tf && tf !== S.tf) setTF(tf); });
+    } catch { }
+  });
+}
+// draw your Demo / Real trades (and the selected AI setup) on the TradingView chart
+function drawTvPositions() {
+  if (!tvw || !tvwReady) return;
+  const items = chartItems(), s = S.setups[S.selected];
+  const sig = items.map(p => [p.id, p.status, p.tp1Hit, p.sl, p.remaining].join(':')).join(',') + '|' + (s ? s.sigId || S.selected : '') + '|' + S.symbol + S.tf
+    + '|' + S.chartEvents.filter(e => e.symbol === S.symbol.toUpperCase()).length;
+  if (sig === tvSig) return;
+  tvSig = sig;
+  let ch; try { ch = tvw.activeChart(); } catch { return; }
+  tvShapes.forEach(id => { try { ch.removeEntity(id); } catch { } }); tvShapes = [];
+  const keep = x => Promise.resolve(x).then(id => { if (id) tvShapes.push(id); }).catch(() => { });
+  const scale = 10 ** (S.prec ?? 2), tfs = TF_SEC[S.tf] || 900;
+  const lastT = S.candles.length ? S.candles[S.candles.length - 1].time : nowSec();
+  const box = (dir, t0, entry, sl, tp, label) => {
+    const t1 = Math.max(lastT + tfs * 12, t0 + tfs * 20);
+    keep(ch.createMultipointShape([{ time: t0, price: entry }, { time: t1, price: entry }], {
+      shape: dir === 'long' ? 'long_position' : 'short_position', lock: true, disableUndo: true,
+      overrides: { profitLevel: Math.max(1, Math.round(Math.abs(tp - entry) * scale)), stopLevel: Math.max(1, Math.round(Math.abs(entry - sl) * scale)) }
+    }));
+    keep(ch.createShape({ time: t0, price: entry }, { shape: 'horizontal_ray', lock: true, disableUndo: true, overrides: { linecolor: '#4ea8ff', linewidth: 1, showLabel: true, text: label, textcolor: '#4ea8ff', fontsize: 11, horzLabelsAlign: 'right', vertLabelsAlign: 'bottom' } }));
+  };
+  const ray = (t0, price, text, color, style = 2) => keep(ch.createShape({ time: t0, price }, { shape: 'horizontal_ray', lock: true, disableUndo: true, overrides: { linecolor: color, linewidth: 1, linestyle: style, showLabel: true, text, textcolor: color, fontsize: 11, horzLabelsAlign: 'right', vertLabelsAlign: 'top' } }));
+  try {
+    items.forEach(p => {
+      const t0 = barAtOrBefore(Math.floor((p.opened || p.created) / 1000)) || lastT;
+      const side = p.dir === 'long' ? 'BUY' : 'SELL';
+      const label = `${p.acc === 'real' ? 'REAL' : 'DEMO'} ${p.status === 'pending' ? p.type : side} ${(+p.remaining).toPrecision(3)} @ ${fmt(p.entry, p.prec)}${p.tp1Hit ? ' · TP1 ✓ SL→BE' : ''}`;
+      box(p.dir, t0, p.entry, p.sl === p.entry ? p.sl0 ?? p.sl : p.sl, p.tp2, label);
+      if (!p.tp1Hit) ray(t0, p.tp1, 'TP1', '#19e3a2');
+      if (p.tp1Hit) ray(t0, p.sl, 'SL (break-even)', '#ff4d6d', 0);
+    });
+    if (s && !items.some(p => p.sigId && p.sigId === s.sigId)) {
+      box(s.direction, lastT, s.entry, s.stopLoss, s.tp2, `AI setup #${S.selected + 1} · ${s.direction === 'long' ? 'BUY' : 'SELL'} ${fmt(s.entry)}`);
+      ray(lastT, s.tp1, 'TP1', '#19e3a2');
+    }
+    // Entry / TP / SL markers
+    const first = S.candles[0]?.time || 0;
+    S.chartEvents.filter(e => e.market === S.market && e.symbol === S.symbol.toUpperCase() && e.t >= first).slice(-40).forEach(e => {
+      const t = barAtOrBefore(Math.floor(e.t / tfs) * tfs) || e.t;
+      const up = e.pos === 'belowBar';
+      keep(ch.createShape({ time: t }, { shape: up ? 'arrow_up' : 'arrow_down', lock: true, disableUndo: true, text: e.text, overrides: { color: e.color, arrowColor: e.color, text: e.text, fontsize: 12 } }));
+    });
+  } catch (e) { console.warn('TradingView drawing failed', e); }
 }
 
 /* ---------------- boot ---------------- */
