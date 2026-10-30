@@ -1,0 +1,273 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Pryme Analyser</title>
+<meta name="theme-color" content="#07090d">
+<meta name="description" content="AI chart analyser for Forex, Crypto, CSE and global stocks — entry, stop loss and take profit levels with a demo wallet.">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'><rect width='64' height='64' rx='14' fill='%2307090d'/><path d='M14 44 L26 30 L34 38 L50 18' stroke='%23c6ff3d' stroke-width='6' fill='none' stroke-linecap='round' stroke-linejoin='round'/></svg>">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="style.css">
+<script src="https://unpkg.com/lightweight-charts@4.2.0/dist/lightweight-charts.standalone.production.js"></script>
+</head>
+<body>
+
+<header class="topbar">
+  <div class="brand">
+    <svg viewBox="0 0 64 64" class="logo"><path d="M10 46 L24 30 L33 39 L54 16" stroke="currentColor" stroke-width="6" fill="none" stroke-linecap="round" stroke-linejoin="round"/><circle cx="54" cy="16" r="5" fill="currentColor"/></svg>
+    <div>
+      <div class="brand-name">PRYME<span>ANALYSER</span></div>
+      <div class="brand-sub">AI chart intelligence</div>
+    </div>
+  </div>
+  <div class="top-right">
+    <div class="live-pill" id="livePill"><i></i><span>CONNECTING</span></div>
+    <button class="chip" id="demoChip" title="Demo wallet">DEMO <b id="demoChipBal">$0</b></button>
+    <button class="icon-btn" id="btnSettings" title="AI keys & settings" aria-label="Settings">
+      <svg viewBox="0 0 24 24"><path d="M12 15.5a3.5 3.5 0 1 0 0-7 3.5 3.5 0 0 0 0 7Z"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1Z"/></svg>
+    </button>
+  </div>
+</header>
+
+<section class="controls">
+  <div class="seg" id="marketSeg">
+    <button data-m="forex">Forex</button>
+    <button data-m="crypto">Crypto</button>
+    <button data-m="cse">CSE 🇱🇰</button>
+    <button data-m="stock">Stocks</button>
+  </div>
+  <div class="sym-wrap">
+    <input id="symbolInput" list="symbolList" autocomplete="off" spellcheck="false" placeholder="Symbol">
+    <datalist id="symbolList"></datalist>
+    <button class="ghost" id="btnLoad">Load</button>
+  </div>
+  <div class="tf" id="tfSeg">
+    <button data-tf="1m">1m</button><button data-tf="5m">5m</button><button data-tf="15m">15m</button>
+    <button data-tf="30m">30m</button><button data-tf="1h">1H</button><button data-tf="4h">4H</button><button data-tf="1d">1D</button>
+  </div>
+  <div class="quick" id="quickPicks"></div>
+</section>
+
+<main class="layout">
+  <!-- CHART -->
+  <section class="card chart-card">
+    <div class="chart-head">
+      <div>
+        <div class="sym-title" id="symTitle">—</div>
+        <div class="sym-sub" id="symSub">Loading…</div>
+      </div>
+      <div class="price-box">
+        <div class="price" id="lastPrice">—</div>
+        <div class="chg" id="lastChg">—</div>
+      </div>
+    </div>
+    <div class="chart-tabs">
+      <button class="on" data-view="pryme">Pryme chart</button>
+      <button data-view="tv">TradingView live</button>
+      <div class="legend"><span class="l e20">EMA 20</span><span class="l e50">EMA 50</span><span class="l e200">EMA 200</span></div>
+    </div>
+    <div class="chart-area">
+      <div id="chart"></div>
+      <div id="tvWrap" class="hidden"></div>
+      <div class="chart-msg hidden" id="chartMsg"></div>
+    </div>
+    <div class="ind-row" id="indRow"></div>
+  </section>
+
+  <!-- SIDE -->
+  <aside class="side">
+    <section class="card acct-card">
+      <h3>Account</h3>
+      <div class="seg acct-seg" id="acctSeg">
+        <button data-acc="demo">Demo</button>
+        <button data-acc="real">Real</button>
+      </div>
+      <div class="bal-row">
+        <div>
+          <div class="bal-main" id="balMain">$0.00</div>
+          <div class="bal-sub" id="balSub">Rs 0.00</div>
+        </div>
+        <button class="ghost" id="btnEditBal">Edit balance</button>
+      </div>
+      <label class="risk-l">Risk per trade %
+        <input type="number" id="riskInput" min="0.1" max="10" step="0.1" inputmode="decimal">
+      </label>
+      <button class="primary" id="btnAnalyse">
+        <span class="btn-label">Analyse with AI</span>
+        <span class="spinner"></span>
+      </button>
+      <div class="ai-status" id="aiStatus"></div>
+      <label class="check auto-main"><input type="checkbox" id="autoOn"> <span><b>Auto next setup</b> — when a signal's TP hits on the live chart, analyse again with the updated balance</span></label>
+      <details class="auto-more">
+        <summary>Auto settings</summary>
+        <div class="field-row">
+          <label>Next setup when
+            <select id="autoTrigger">
+              <option value="tp1">TP1 hits</option>
+              <option value="tp2">TP2 hits (or BE)</option>
+            </select>
+          </label>
+          <label>Setup expires after (candles)
+            <input type="number" id="autoExpiry" min="3" max="200" step="1">
+          </label>
+        </div>
+        <label class="check"><input type="checkbox" id="autoSL"> Also give a new setup when SL hits</label>
+        <div class="field-row three">
+          <label>Auto-take best
+            <select id="autoTake">
+              <option value="off">Off (I take manually)</option>
+              <option value="demo">On Demo</option>
+            </select>
+          </label>
+          <label>Min conf %<input type="number" id="autoConf" min="1" max="95" step="1"></label>
+          <label>Max open<input type="number" id="autoMax" min="1" max="10" step="1"></label>
+        </div>
+        <p class="fine">Auto-take only uses A / A+ setups. Real trades are never placed for you — you place them at your broker and press "Took on Real" so Pryme tracks them.</p>
+      </details>
+    </section>
+
+    <section class="card result-card" id="resultCard">
+      <div class="empty" id="resultEmpty">
+        <div class="empty-mark">◎</div>
+        <p>Pick a market and symbol, set your balance, then hit <b>Analyse with AI</b>. You'll get 3–4 entries with SL and TP drawn on the chart.</p>
+      </div>
+      <div id="resultBody" class="hidden">
+        <div class="verdict">
+          <div class="gauge" id="gauge"><svg viewBox="0 0 120 70"><path d="M10 62 A50 50 0 0 1 110 62" class="g-bg"/><path d="M10 62 A50 50 0 0 1 110 62" class="g-fg" id="gaugeFg"/></svg><div class="g-val" id="gaugeVal">0</div></div>
+          <div>
+            <div class="bias" id="biasLabel">NEUTRAL</div>
+            <div class="by" id="aiBy"></div>
+          </div>
+        </div>
+        <p class="summary" id="summaryText"></p>
+        <div class="news-impact" id="newsImpact"></div>
+        <div id="setups"></div>
+        <div class="keylevels" id="keyLevels"></div>
+      </div>
+    </section>
+
+    <section class="card sig-card">
+      <h3>Live signals <span class="rec" id="sigRecord">—</span></h3>
+      <ul class="sig-list" id="sigList"></ul>
+      <h3 class="sub-h">Auto log</h3>
+      <ul class="autolog" id="autoLog"></ul>
+    </section>
+
+    <section class="card news-card">
+      <h3>Today's news <small id="newsQ"></small></h3>
+      <ul id="newsList" class="news"></ul>
+    </section>
+  </aside>
+</main>
+
+<!-- ACCOUNTS -->
+<section class="card demo-card" id="acctSection">
+  <div class="demo-head">
+    <div class="seg small" id="acctViewSeg">
+      <button data-v="demo">Demo account</button>
+      <button data-v="real">Real account</button>
+    </div>
+    <div class="demo-stats">
+      <div><small>Balance USD</small><b id="aBalUSD">$0</b></div>
+      <div><small>Balance LKR</small><b id="aBalLKR">Rs 0</b></div>
+      <div><small>Floating P/L</small><b id="aFloat">0</b></div>
+      <div><small>Win rate</small><b id="aWin">—</b></div>
+    </div>
+    <div class="demo-actions">
+      <button class="ghost" id="btnEditBal2">Edit balance</button>
+      <button class="ghost danger" id="btnResetAcc">Reset</button>
+    </div>
+  </div>
+  <div class="tabs2">
+    <button class="on" data-dt="open">Open & pending</button>
+    <button data-dt="hist">History</button>
+  </div>
+  <div class="table-wrap"><table id="posTable"></table></div>
+  <p class="fine" id="acctNote"></p>
+</section>
+
+<footer class="foot">
+  <p>Pryme Analyser gives AI-generated analysis for education and practice. No analysis can guarantee profit — markets carry real risk of loss. Test on the demo wallet first and never risk money you can't afford to lose.</p>
+</footer>
+
+<!-- SETTINGS MODAL -->
+<div class="modal hidden" id="settingsModal">
+  <div class="modal-box">
+    <div class="modal-head">
+      <h3>AI keys & settings</h3>
+      <button class="icon-btn" data-close aria-label="Close"><svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18"/></svg></button>
+    </div>
+    <p class="fine">Add as many free keys as you like. Pryme tries them top to bottom — if one hits a limit, it moves to the next. Keys are saved only in this browser.</p>
+    <div id="keyList"></div>
+    <button class="ghost" id="btnAddKey">+ Add key</button>
+
+    <div class="field-row" style="margin-top:16px">
+      <label>Explanation language
+        <select id="langSel">
+          <option value="singlish">Singlish (Sinhala in English letters)</option>
+          <option value="sinhala">සිංහල</option>
+          <option value="english">English</option>
+        </select>
+      </label>
+    </div>
+
+    <details class="howto">
+      <summary>Where to get free keys</summary>
+      <ul>
+        <li><b>Groq</b> — console.groq.com → API Keys (very fast, free tier)</li>
+        <li><b>Gemini</b> — aistudio.google.com → Get API key (free tier)</li>
+        <li><b>OpenRouter</b> — openrouter.ai → Keys (use models ending in <code>:free</code>)</li>
+        <li><b>Mistral</b> — console.mistral.ai → API keys (free experiment plan)</li>
+        <li><b>Cerebras</b> — cloud.cerebras.ai → API keys (free tier)</li>
+      </ul>
+      <p class="fine">Model names change over time. Leave the model box empty to use the default, or type a newer model name from the provider's site.</p>
+    </details>
+    <div class="modal-foot"><button class="primary" data-close>Save & close</button></div>
+  </div>
+</div>
+
+<!-- TRADE MODAL -->
+<div class="modal hidden" id="tradeModal">
+  <div class="modal-box small">
+    <div class="modal-head">
+      <h3 id="tmTitle">Place demo trade</h3>
+      <button class="icon-btn" data-close aria-label="Close"><svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18"/></svg></button>
+    </div>
+    <div class="field-grid">
+      <label>Entry<input type="number" step="any" id="tmEntry"></label>
+      <label>Stop loss<input type="number" step="any" id="tmSL"></label>
+      <label>TP1<input type="number" step="any" id="tmTP1"></label>
+      <label>TP2<input type="number" step="any" id="tmTP2"></label>
+      <label>Size (units)<input type="number" step="any" id="tmUnits"></label>
+      <label>Account<select id="tmAcc"><option value="demo">Demo</option><option value="real">Real (I placed it at my broker)</option></select></label>
+      <label>Order<select id="tmType"><option value="auto">Auto (market/limit/stop)</option><option value="market">Market now</option></select></label>
+    </div>
+    <div class="tm-info" id="tmInfo"></div>
+    <div class="modal-foot"><button class="primary" id="tmConfirm">Place on demo</button></div>
+  </div>
+</div>
+
+<!-- BALANCE MODAL -->
+<div class="modal hidden" id="balModal">
+  <div class="modal-box small">
+    <div class="modal-head">
+      <h3 id="bmTitle">Edit balance</h3>
+      <button class="icon-btn" data-close aria-label="Close"><svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18"/></svg></button>
+    </div>
+    <div class="field-grid">
+      <label>USD balance (Forex / Crypto / Stocks)<input type="number" step="any" min="0" id="bmUSD"></label>
+      <label>LKR balance (CSE)<input type="number" step="any" min="0" id="bmLKR"></label>
+    </div>
+    <p class="fine" id="bmNote"></p>
+    <div class="modal-foot"><button class="primary" id="bmSave">Save</button></div>
+  </div>
+</div>
+
+<div class="toast hidden" id="toast"></div>
+
+<script src="app.js"></script>
+</body>
+</html>
