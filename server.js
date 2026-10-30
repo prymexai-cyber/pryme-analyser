@@ -12,6 +12,8 @@ const path = require('path');
 const app = express();
 app.use(express.json({ limit: '2mb' }));
 app.use(express.static(path.join(__dirname, 'public')));
+// TradingView Advanced Charts library (optional) lives in public/charting_library — if it's not there, answer 404 (not index.html)
+app.use('/charting_library', (_, res) => res.status(404).end());
 
 const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0 Safari/537.36';
 const TF_SEC = { '1m': 60, '5m': 300, '15m': 900, '30m': 1800, '1h': 3600, '4h': 14400, '1d': 86400 };
