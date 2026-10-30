@@ -33,7 +33,7 @@ const S = {
   symbol: null,
   tf: store.get('pa_tf', '15m'),
   candles: [], meta: {}, ind: null,
-  ws: null, poll: null, view: 'pryme',
+  ws: null, poll: null, view: 'tv', searchHits: null,
   setups: [], analysis: null, priceLines: [], selected: null,
   news: [],
   settings: Object.assign({ keys: [], lang: 'singlish', riskPct: 1, active: 'demo' }, store.get('pa_settings', {})),
@@ -369,10 +369,27 @@ function drawSetupLines(idx) {
   const last = S.candles[S.candles.length - 1];
   candleS.setMarkers([{ time: last.time, position: s.direction === 'long' ? 'belowBar' : 'aboveBar', color: s.direction === 'long' ? '#19e3a2' : '#ff4d6d', shape: s.direction === 'long' ? 'arrowUp' : 'arrowDown', text: s.direction === 'long' ? 'BUY' : 'SELL' }]);
   $$('.setup').forEach((el, i) => el.classList.toggle('sel', i === idx));
-  if (S.view !== 'pryme') setView('pryme');
+  renderLvlBox();
+}
+// floating levels panel over the TradingView chart
+function renderLvlBox() {
+  const box = $('#lvlBox'), s = S.setups[S.selected];
+  if (!s) { box.classList.add('hidden'); return; }
+  const px = S.candles.length ? S.candles[S.candles.length - 1].close : null;
+  const sg = s.direction === 'long' ? 1 : -1;
+  const pl = px != null ? (px - s.entry) * sg : null;
+  box.innerHTML = `<div class="lb-head"><span class="tag ${s.direction}">${s.direction === 'long' ? 'BUY' : 'SELL'}</span><b>#${S.selected + 1}</b> <span style="color:var(--dim)">${s.grade || ''} · ${s.confidence}%</span><button data-lb-close title="Hide">✕</button></div>
+    <div class="r en"><span>ENTRY</span><b>${fmt(s.entry)}</b></div>
+    <div class="r sl"><span>STOP LOSS</span><b>${fmt(s.stopLoss)}</b></div>
+    <div class="r tp"><span>TP1</span><b>${fmt(s.tp1)}</b></div>
+    <div class="r tp"><span>TP2</span><b>${fmt(s.tp2)}</b></div>
+    <div class="r tp"><span>TP3</span><b>${fmt(s.tp3)}</b></div>
+    ${px != null ? `<div class="r now"><span>NOW</span><b class="${pl >= 0 ? 'up' : 'down'}">${fmt(px)} (${pl >= 0 ? '+' : ''}${fmt(pl)})</b></div>` : ''}`;
+  box.classList.remove('hidden');
 }
 
 function tvSymbol() {
+  if (S.meta && S.meta.tv) return S.meta.tv;
   const s = S.symbol.toUpperCase();
   if (S.market === 'crypto') return 'BINANCE:' + s.replace(/[^A-Z0-9]/g, '');
   if (S.market === 'cse') return 'CSELK:' + (s.includes('.') ? s : s + '.N0000');
@@ -383,11 +400,8 @@ function tvSymbol() {
   return s;
 }
 function setView(v) {
-  S.view = v;
-  $$('.chart-tabs button').forEach(b => b.classList.toggle('on', b.dataset.view === v));
-  $('#chart').classList.toggle('hidden', v !== 'pryme');
-  $('#tvWrap').classList.toggle('hidden', v !== 'tv');
-  if (v === 'tv') {
+  S.view = 'tv';
+  {
     const src = `https://s.tradingview.com/widgetembed/?frameElementId=tvf&symbol=${encodeURIComponent(tvSymbol())}&interval=${TV_INT[S.tf]}&theme=dark&style=1&timezone=Asia%2FColombo&withdateranges=1&allow_symbol_change=1&saveimage=0&studies=%5B%5D&locale=en`;
     const w = $('#tvWrap');
     if (w.dataset.src !== src) { w.innerHTML = `<iframe src="${src}" allowfullscreen loading="lazy"></iframe>`; w.dataset.src = src; }
@@ -403,7 +417,7 @@ function stopLive() { if (S.ws) { try { S.ws.close(); } catch { } S.ws = null; }
 
 async function loadMarket(opts = {}) {
   stopLive(); clearLines();
-  S.setups = []; renderResult(null);
+  S.setups = []; S.selected = null; renderResult(null); $('#lvlBox').classList.add('hidden');
   $('#symTitle').textContent = S.symbol.toUpperCase();
   $('#symSub').textContent = 'Loading data…';
   $('#chartMsg').classList.add('hidden');
@@ -418,15 +432,16 @@ async function loadMarket(opts = {}) {
     drawSeries(); chart.timeScale().fitContent();
     if (S.candles.length > 150) chart.timeScale().setVisibleLogicalRange({ from: S.candles.length - 150, to: S.candles.length + 8 });
     updateHeader(); renderIndicators();
-    $('#symSub').textContent = [d.name, d.symbol, S.market.toUpperCase(), S.tf].filter(Boolean).join(' · ');
-    if (d.limited) { const m = $('#chartMsg'); m.textContent = 'CSE history is limited right now — the chart fills in as live prices come in. Use the TradingView tab for the full CSE chart. AI analysis still uses the day range and 52-week levels.'; m.classList.remove('hidden'); }
+    $('#symSub').textContent = [d.name, d.tv || d.symbol, S.market.toUpperCase(), S.tf].filter(Boolean).join(' · ');
+    if (d.priceNote && d.priceNote.startsWith('futures')) { const m = $('#chartMsg'); m.textContent = 'Spot price feed is busy — showing futures prices for now (slightly higher than spot). Chart is set to futures so levels match.'; m.classList.remove('hidden'); }
+    if (d.limited) { const m = $('#chartMsg'); m.textContent = 'CSE history is limited right now — the chart fills in as live prices come in. The TradingView chart shows the full CSE history. AI analysis still uses the day range and 52-week levels.'; m.classList.remove('hidden'); }
     startLive();
   } catch (e) {
     $('#symSub').textContent = 'Error';
-    const m = $('#chartMsg'); m.textContent = 'Could not load data: ' + e.message + ' — check the symbol, or open the TradingView tab.'; m.classList.remove('hidden');
+    const m = $('#chartMsg'); m.textContent = 'Could not load data: ' + e.message + ' — check the symbol and try again.'; m.classList.remove('hidden');
     setLive(false, 'ERROR');
   }
-  if (S.view === 'tv') setView('tv');
+  setView('tv');
   await loadNews();
 }
 function onTick(c) {
@@ -436,6 +451,7 @@ function onTick(c) {
   volS.update({ time: c.time, value: c.volume || 0, color: c.close >= c.open ? 'rgba(25,227,162,.25)' : 'rgba(255,77,109,.25)' });
   S.livePrices[S.market + '|' + S.symbol.toUpperCase()] = c.close;
   updateHeader();
+  if (S.selected != null) renderLvlBox();
 }
 function startLive() {
   if (S.market === 'crypto') {
@@ -454,16 +470,19 @@ function startLive() {
 }
 function fallbackPoll() {
   clearInterval(S.poll);
-  setLive(true, S.market === 'crypto' ? 'LIVE' : 'LIVE ~10s');
+  const label = S.market === 'crypto' ? 'LIVE' : 'LIVE';
+  setLive(true, label);
   const key = `${S.market}|${S.symbol}|${S.tf}`;
+  let fails = 0;
   S.poll = setInterval(async () => {
     if (document.hidden) return;
     try {
       const d = await fetchCandles(S.market, S.symbol, S.tf);
       if (`${S.market}|${S.symbol}|${S.tf}` !== key) return;
       d.candles.slice(-3).forEach(onTick);
-    } catch { setLive(false, 'RETRYING'); }
-  }, S.market === 'cse' ? 20000 : 10000);
+      fails = 0; setLive(true, label);
+    } catch { if (++fails >= 3) setLive(false, 'RECONNECTING'); }
+  }, S.market === 'cse' ? 20000 : 12000);
 }
 function updateHeader() {
   const cs = S.candles; if (!cs.length) return;
@@ -1053,7 +1072,7 @@ function setMarket(m, sym) {
   S.symbol = sym || store.get('pa_sym_' + m, DEFAULT_SYM[m]);
   $$('#marketSeg button').forEach(b => b.classList.toggle('on', b.dataset.m === m));
   $('#symbolInput').value = S.symbol;
-  $('#symbolList').innerHTML = PICKS[m].map(s => `<option value="${s}">`).join('');
+  S.searchHits = null; $('#symbolList').innerHTML = PICKS[m].map(s => `<option value="${s}">`).join('');
   $('#quickPicks').innerHTML = PICKS[m].map(s => `<button data-sym="${s}">${s.replace('.N0000', '')}</button>`).join('');
   renderAcctCard();
   return loadMarket();
@@ -1070,8 +1089,24 @@ function wire() {
   $('#quickPicks').onclick = e => { const b = e.target.closest('button'); if (b) setSymbol(b.dataset.sym); };
   $('#btnLoad').onclick = () => setSymbol($('#symbolInput').value);
   $('#symbolInput').onkeydown = e => { if (e.key === 'Enter') setSymbol(e.target.value); };
-  $('#symbolInput').onchange = e => { if (PICKS[S.market].includes(e.target.value.toUpperCase())) setSymbol(e.target.value); };
-  $('.chart-tabs').onclick = e => { const b = e.target.closest('button'); if (b) setView(b.dataset.view); };
+  // symbol search (any stock / coin / forex pair / CSE company)
+  let sTimer, sSeq = 0;
+  const doSearch = async q => {
+    const my = ++sSeq;
+    try {
+      const d = await getJSON(`/api/search?market=${S.market}&q=${encodeURIComponent(q)}`);
+      if (my !== sSeq) return;
+      S.searchHits = d.items || [];
+      $('#symbolList').innerHTML = S.searchHits.map(x => `<option value="${esc(x.symbol)}">${esc(x.name || '')}</option>`).join('');
+    } catch { }
+  };
+  $('#symbolInput').oninput = e => {
+    const v = e.target.value.trim();
+    if ((S.searchHits || []).some(x => x.symbol === v)) return setSymbol(v); // picked from list
+    clearTimeout(sTimer); sTimer = setTimeout(() => doSearch(v), 280);
+  };
+  $('#symbolInput').onfocus = () => { if (!S.searchHits) doSearch(''); };
+  $('#lvlBox').onclick = e => { if (e.target.closest('[data-lb-close]')) $('#lvlBox').classList.add('hidden'); };
 
   // account
   $('#acctSeg').onclick = e => { const b = e.target.closest('button'); if (b) setActive(b.dataset.acc); };
@@ -1085,6 +1120,7 @@ function wire() {
     addLog(`${ACC_LABEL[balTarget]} balance set to ${money(u, 'USD')} / ${money(l, 'LKR')}.`);
     renderAcctCard(); renderAccounts(); if (S.analysis) renderResult(S.analysis);
   };
+  if (!(+S.settings.riskPct > 0)) { S.settings.riskPct = 1; saveSettings(); }
   $('#riskInput').value = S.settings.riskPct;
   $('#riskInput').oninput = e => { S.settings.riskPct = Math.max(0.1, Math.min(10, +e.target.value || 1)); saveSettings(); if (S.analysis) renderResult(S.analysis); };
   $('#btnAnalyse').onclick = runAnalysis;
