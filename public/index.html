@@ -40,7 +40,7 @@
     <button data-m="stock">Stocks</button>
   </div>
   <div class="sym-wrap">
-    <input id="symbolInput" list="symbolList" autocomplete="off" spellcheck="false" placeholder="Symbol">
+    <input id="symbolInput" list="symbolList" autocomplete="off" spellcheck="false" placeholder="Search any symbol…">
     <datalist id="symbolList"></datalist>
     <button class="ghost" id="btnLoad">Load</button>
   </div>
@@ -52,6 +52,7 @@
 </section>
 
 <main class="layout">
+  <div class="main-col">
   <!-- CHART -->
   <section class="card chart-card">
     <div class="chart-head">
@@ -64,18 +65,41 @@
         <div class="chg" id="lastChg">—</div>
       </div>
     </div>
-    <div class="chart-tabs">
-      <button class="on" data-view="pryme">Pryme chart</button>
-      <button data-view="tv">TradingView live</button>
-      <div class="legend"><span class="l e20">EMA 20</span><span class="l e50">EMA 50</span><span class="l e200">EMA 200</span></div>
-    </div>
     <div class="chart-area">
-      <div id="chart"></div>
-      <div id="tvWrap" class="hidden"></div>
+      <div id="chart" class="hidden" aria-hidden="true"></div>
+      <div id="tvWrap"></div>
+      <div class="lvl-box hidden" id="lvlBox"></div>
       <div class="chart-msg hidden" id="chartMsg"></div>
     </div>
     <div class="ind-row" id="indRow"></div>
   </section>
+
+  <!-- ACCOUNTS -->
+<section class="card demo-card" id="acctSection">
+  <div class="demo-head">
+    <div class="seg small" id="acctViewSeg">
+      <button data-v="demo">Demo account</button>
+      <button data-v="real">Real account</button>
+    </div>
+    <div class="demo-stats">
+      <div><small>Balance USD</small><b id="aBalUSD">$0</b></div>
+      <div><small>Balance LKR</small><b id="aBalLKR">Rs 0</b></div>
+      <div><small>Floating P/L</small><b id="aFloat">0</b></div>
+      <div><small>Win rate</small><b id="aWin">—</b></div>
+    </div>
+    <div class="demo-actions">
+      <button class="ghost" id="btnEditBal2">Edit balance</button>
+      <button class="ghost danger" id="btnResetAcc">Reset</button>
+    </div>
+  </div>
+  <div class="tabs2">
+    <button class="on" data-dt="open">Open & pending</button>
+    <button data-dt="hist">History</button>
+  </div>
+  <div class="table-wrap"><table id="posTable"></table></div>
+  <p class="fine" id="acctNote"></p>
+</section>
+  </div>
 
   <!-- SIDE -->
   <aside class="side">
@@ -162,32 +186,6 @@
     </section>
   </aside>
 </main>
-
-<!-- ACCOUNTS -->
-<section class="card demo-card" id="acctSection">
-  <div class="demo-head">
-    <div class="seg small" id="acctViewSeg">
-      <button data-v="demo">Demo account</button>
-      <button data-v="real">Real account</button>
-    </div>
-    <div class="demo-stats">
-      <div><small>Balance USD</small><b id="aBalUSD">$0</b></div>
-      <div><small>Balance LKR</small><b id="aBalLKR">Rs 0</b></div>
-      <div><small>Floating P/L</small><b id="aFloat">0</b></div>
-      <div><small>Win rate</small><b id="aWin">—</b></div>
-    </div>
-    <div class="demo-actions">
-      <button class="ghost" id="btnEditBal2">Edit balance</button>
-      <button class="ghost danger" id="btnResetAcc">Reset</button>
-    </div>
-  </div>
-  <div class="tabs2">
-    <button class="on" data-dt="open">Open & pending</button>
-    <button data-dt="hist">History</button>
-  </div>
-  <div class="table-wrap"><table id="posTable"></table></div>
-  <p class="fine" id="acctNote"></p>
-</section>
 
 <footer class="foot">
   <p>Pryme Analyser gives AI-generated analysis for education and practice. No analysis can guarantee profit — markets carry real risk of loss. Test on the demo wallet first and never risk money you can't afford to lose.</p>
