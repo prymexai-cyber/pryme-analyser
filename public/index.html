@@ -66,9 +66,14 @@
         <div class="chg" id="lastChg">—</div>
       </div>
     </div>
+    <div class="chart-tabs">
+      <button class="on" data-view="tv">TradingView live</button>
+      <button data-view="pryme">Positions chart</button>
+    </div>
     <div class="chart-area">
-      <div id="chart"></div>
-      <div id="posLayer" class="pos-layer"></div>
+      <div id="tvWrap"></div>
+      <div id="chart" class="hidden"></div>
+      <div id="posLayer" class="pos-layer hidden"></div>
       <div class="lvl-box hidden" id="lvlBox"></div>
       <div class="chart-msg hidden" id="chartMsg"></div>
     </div>
