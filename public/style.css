@@ -279,3 +279,16 @@ td.acts{display:flex;gap:4px;justify-content:flex-end}
 .mk.bad{color:var(--short);border-color:rgba(255,77,109,.4)}
 .mk.bad:hover{background:rgba(255,77,109,.1)}
 .s-acts{grid-column:2/4;display:flex;gap:6px;margin-top:4px}
+
+/* positions on chart */
+.pos-layer{position:absolute;inset:0;pointer-events:none;z-index:3;overflow:hidden}
+.pbox{position:absolute}
+.pbox.win{background:rgba(25,227,162,.11);box-shadow:inset 0 0 0 1px rgba(25,227,162,.25)}
+.pbox.loss{background:rgba(255,77,109,.11);box-shadow:inset 0 0 0 1px rgba(255,77,109,.25)}
+.pbox.prev{background:transparent;opacity:.9;border:1px dashed currentColor}
+.pbox.win.prev{color:rgba(25,227,162,.6);background:rgba(25,227,162,.05)}
+.pbox.loss.prev{color:rgba(255,77,109,.6);background:rgba(255,77,109,.05)}
+.chart-legend{display:flex;flex-wrap:wrap;align-items:center;gap:10px;margin-top:6px;font:500 11px var(--mono)}
+.chart-legend .l::before{content:'';display:inline-block;width:10px;height:2px;margin-right:5px;vertical-align:middle;background:currentColor}
+.tv-link{color:var(--muted);text-decoration:none;border:1px solid var(--line2);border-radius:7px;padding:2px 7px}
+.tv-link:hover{color:var(--text)}
