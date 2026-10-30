@@ -728,6 +728,12 @@ function notify(title, body) {
   } catch { }
 }
 
+const startBar = ms => Math.floor(ms / 60000) * 60; // the 1m bar the item was created in
+// migrate items from older versions (they used wall-clock checks and could skip candles)
+[...S.signals, ...S.accounts.demo.positions, ...S.accounts.real.positions].forEach(x => {
+  if ('lastCheck' in x) { delete x.lastCheck; x.lastBar = null; }
+});
+
 /* ---------- live signals ---------- */
 function latestBatch(market, symbol) {
   return S.signals.filter(g => g.market === market && g.symbol === symbol).reduce((m, g) => Math.max(m, g.batch), 0);
@@ -741,7 +747,7 @@ function newSignalBatch() {
     const g = {
       id: uid(), batch: S.batch, idx: i, market: S.market, symbol: sym, tf: S.tf, dir: s.direction, type, name: s.name,
       conf: s.confidence, grade: s.grade, entry: isM ? price : s.entry, sl: s.stopLoss, sl0: s.stopLoss, tp1: s.tp1, tp2: s.tp2, tp3: s.tp3,
-      prec: S.prec, status: isM ? 'active' : 'waiting', created: Date.now(), lastCheck: nowSec()
+      prec: S.prec, status: isM ? 'active' : 'waiting', created: Date.now(), lastBar: null
     };
     S.signals.push(g); s.sigId = g.id;
   });
@@ -757,7 +763,8 @@ function recordStat(g, win) {
 function processSignal(g, candles) {
   const sg = g.dir === 'long' ? 1 : -1;
   const events = [];
-  for (const c of candles.filter(c => c.time + 60 >= g.lastCheck)) {
+  // candle-based: re-check the still-forming candle, never skip delayed/missed candles
+  for (const c of candles.filter(c => c.time >= (g.lastBar ?? startBar(g.created)))) {
     if (g.status === 'waiting') {
       const fill = (g.type === 'BUY LIMIT' && c.low <= g.entry) || (g.type === 'BUY STOP' && c.high >= g.entry) ||
         (g.type === 'SELL LIMIT' && c.high >= g.entry) || (g.type === 'SELL STOP' && c.low <= g.entry);
@@ -769,15 +776,15 @@ function processSignal(g, candles) {
     let justHit = false;
     if (g.status === 'active') {
       if (hitSL) { g.status = 'sl'; recordStat(g, false); events.push('sl'); break; }
-      if (hit(g.tp1)) { g.status = 'tp1'; g.sl = g.entry; recordStat(g, true); events.push('tp1'); justHit = true; }
+      if (hit(g.tp1)) { g.status = 'tp1'; g.sl = g.entry; g.tp1At = c.time; recordStat(g, true); events.push('tp1'); justHit = true; }
     }
     if (g.status === 'tp1') {
       if (hit(g.tp2)) { g.status = 'tp2'; events.push('tp2'); break; }
-      if (!justHit && (sg > 0 ? c.low <= g.sl : c.high >= g.sl)) { g.status = 'be'; events.push('be'); break; }
+      if (!justHit && c.time > (g.tp1At ?? 0) && (sg > 0 ? c.low <= g.sl : c.high >= g.sl)) { g.status = 'be'; events.push('be'); break; }
     }
   }
+  if (candles.length) g.lastBar = Math.max(g.lastBar ?? 0, candles[candles.length - 1].time);
   if (g.status === 'waiting' && Date.now() - g.created > S.settings.auto.expiryBars * (TF_SEC[g.tf] || 900) * 1000) { g.status = 'expired'; events.push('expired'); }
-  g.lastCheck = nowSec();
   events.forEach(e => onSignalEvent(g, e));
 }
 function onSignalEvent(g, e) {
@@ -907,7 +914,7 @@ function createPosition(accKey, s, { entry, sl, tp1, tp2, units, market = false,
     id: uid(), acc: accKey, market: S.market, symbol: S.symbol.toUpperCase(), tf: S.tf, dir: s.direction, type,
     entry: isM ? price : entry, sl, tp1, tp2, units, remaining: units, cur: curOf(S.market),
     factor: quoteFactor(S.market, S.symbol, entry), status: isM ? 'open' : 'pending', created: Date.now(), opened: isM ? Date.now() : null,
-    realized: 0, tp1Hit: false, lastCheck: nowSec(), prec: S.prec, name: s.name, auto, batch: S.batch
+    realized: 0, tp1Hit: false, lastBar: null, prec: S.prec, name: s.name, auto, batch: S.batch
   };
   S.accounts[accKey].positions.push(pos); saveAccounts();
   return pos;
@@ -932,7 +939,7 @@ function closePart(pos, price, units, reason) {
 }
 function processPosition(pos, candles) {
   const sg = pos.dir === 'long' ? 1 : -1;
-  for (const c of candles.filter(c => c.time + 60 >= pos.lastCheck)) {
+  for (const c of candles.filter(c => c.time >= (pos.lastBar ?? startBar(pos.created)))) {
     if (pos.status === 'pending') {
       const fill = (pos.type === 'BUY LIMIT' && c.low <= pos.entry) || (pos.type === 'BUY STOP' && c.high >= pos.entry) ||
         (pos.type === 'SELL LIMIT' && c.high >= pos.entry) || (pos.type === 'SELL STOP' && c.low <= pos.entry);
@@ -942,11 +949,12 @@ function processPosition(pos, candles) {
     }
     if (pos.status !== 'open') break;
     const hitSL = sg > 0 ? c.low <= pos.sl : c.high >= pos.sl;
-    if (hitSL) { closePart(pos, pos.sl, pos.remaining, pos.tp1Hit ? 'Break-even stop' : 'Stop loss hit'); break; }
-    if (!pos.tp1Hit && (sg > 0 ? c.high >= pos.tp1 : c.low <= pos.tp1)) { pos.tp1Hit = true; closePart(pos, pos.tp1, pos.units / 2, 'TP1 hit (half closed, SL → entry)'); pos.sl = pos.entry; }
+    // after TP1 the stop is at entry; don't judge it on the same candle that hit TP1
+    if (hitSL && !(pos.tp1Hit && c.time <= (pos.tp1At ?? 0))) { closePart(pos, pos.sl, pos.remaining, pos.tp1Hit ? 'Break-even stop' : 'Stop loss hit'); break; }
+    if (!pos.tp1Hit && (sg > 0 ? c.high >= pos.tp1 : c.low <= pos.tp1)) { pos.tp1Hit = true; pos.tp1At = c.time; closePart(pos, pos.tp1, pos.units / 2, 'TP1 hit (half closed, SL → entry)'); pos.sl = pos.entry; }
     if (pos.status === 'open' && (sg > 0 ? c.high >= pos.tp2 : c.low <= pos.tp2)) { closePart(pos, pos.tp2, pos.remaining, 'TP2 hit'); break; }
   }
-  pos.lastCheck = nowSec();
+  if (candles.length) pos.lastBar = Math.max(pos.lastBar ?? 0, candles[candles.length - 1].time);
 }
 
 /* ---------- live monitor (signals + both accounts) ---------- */
@@ -966,7 +974,11 @@ async function monitor() {
           const px = d.quote?.last ?? d.candles?.[d.candles.length - 1]?.close;
           if (px) candles = [{ time: nowSec(), open: px, high: px, low: px, close: px }];
         } else {
-          candles = (await fetchCandles(market, symbol, '1m', 10)).candles || [];
+          // fetch enough 1m candles to cover everything since the oldest unchecked bar (catches missed TP/SL)
+          const items = [...sigs, ...pos].filter(x => x.market + '|' + x.symbol === k);
+          const from = Math.min(...items.map(x => x.lastBar ?? startBar(x.created)));
+          const need = Math.min(1000, Math.max(10, Math.ceil((nowSec() - from) / 60) + 3));
+          candles = (await fetchCandles(market, symbol, '1m', need)).candles || [];
         }
       } catch { continue; }
       if (!candles.length) continue;
