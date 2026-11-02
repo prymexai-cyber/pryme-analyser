@@ -105,6 +105,7 @@
       <div><small>Balance USD</small><b id="aBalUSD">$0</b></div>
       <div><small>Balance LKR</small><b id="aBalLKR">Rs 0</b></div>
       <div><small>Floating P/L</small><b id="aFloat">0</b></div>
+      <div><small>Open pips</small><b id="aPips">0</b></div>
       <div><small>Win rate</small><b id="aWin">—</b></div>
     </div>
     <div class="demo-actions">
@@ -116,6 +117,7 @@
     <button class="on" data-dt="open">Open & pending</button>
     <button data-dt="hist">History</button>
   </div>
+  <div id="histPanel" class="hist-panel hidden"></div>
   <div class="table-wrap"><table id="posTable"></table></div>
   <p class="fine" id="acctNote"></p>
 </section>
@@ -341,6 +343,26 @@
       <button class="ghost" id="wcKeys">Add AI key</button>
       <button class="primary" id="wcDone">Let's start</button>
     </div>
+  </div>
+</div>
+
+<!-- GOOGLE LOGIN NOT SET UP YET -->
+<div class="modal hidden" id="loginSetupModal">
+  <div class="modal-box">
+    <div class="modal-head">
+      <h3>Google login is not switched on yet</h3>
+      <button class="icon-btn" data-close aria-label="Close"><svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18"/></svg></button>
+    </div>
+    <p class="fine" style="margin-top:4px">Google login and cloud save need a free Firebase project. Do this once (about 10 minutes):</p>
+    <ol class="steps">
+      <li><b>Create a project</b><span><a href="https://console.firebase.google.com" target="_blank" rel="noopener">console.firebase.google.com</a> → Add project.</span></li>
+      <li><b>Turn on Google sign-in</b><span>Build → Authentication → Get started → Google → Enable → Save.</span></li>
+      <li><b>Allow this website</b><span>Authentication → Settings → Authorized domains → Add <code id="lsDomain"></code></span></li>
+      <li><b>Create the database</b><span>Build → Firestore Database → Create → Production mode → asia-south1. Then Rules → paste <code>firestore.rules</code> from the project → Publish.</span></li>
+      <li><b>Copy the web config</b><span>Project settings ⚙️ → Your apps → Web (&lt;/&gt;) → Register → copy apiKey, authDomain, projectId, appId.</span></li>
+      <li><b>Add them on Render</b><span>Render → your service → Environment → add FIREBASE_API_KEY, FIREBASE_AUTH_DOMAIN, FIREBASE_PROJECT_ID, FIREBASE_APP_ID → Save. After the redeploy, reload this page.</span></li>
+    </ol>
+    <div class="modal-foot"><button class="primary" data-close>Got it</button></div>
   </div>
 </div>
 
