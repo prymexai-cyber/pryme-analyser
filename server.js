@@ -333,6 +333,17 @@ async function cseCandles(symbol, tf, limit) {
 /* ---------- routes ---------- */
 app.get('/api/health', (_, res) => res.json({ ok: true, time: Date.now() }));
 
+// Firebase web config (Google login + cloud save). Set these 4 env vars on Render → Environment.
+// They are public identifiers (safe in the browser); your data is protected by Firestore security rules.
+app.get('/api/config', (_, res) => {
+  const e = process.env;
+  const firebase = e.FIREBASE_API_KEY ? {
+    apiKey: e.FIREBASE_API_KEY, authDomain: e.FIREBASE_AUTH_DOMAIN || `${e.FIREBASE_PROJECT_ID}.firebaseapp.com`,
+    projectId: e.FIREBASE_PROJECT_ID, appId: e.FIREBASE_APP_ID
+  } : null;
+  res.json({ firebase });
+});
+
 // Live spot gold for the browser (it fetches PAXG candles from Binance itself and shifts them to spot)
 app.get('/api/goldspot', async (req, res) => {
   wantGoldTicks();
