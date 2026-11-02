@@ -43,3 +43,22 @@ TradingView's free embed chart can't be drawn on by other websites. To see your 
 
 Pryme detects the library automatically: the tab becomes **"TradingView (positions)"**, fed with Pryme's live data.
 Without the library everything still works (TradingView embed + the Positions chart tab).
+
+## Google login + cloud save (Firebase, free)
+Render's free disk is wiped on every restart/deploy, so Pryme saves your data (accounts, trades, signals,
+settings, AI keys, profile) in **Firebase Firestore** under your Google account.
+
+1. https://console.firebase.google.com → **Add project** (Google Analytics not needed).
+2. **Build → Authentication → Get started → Sign-in method → Google → Enable → Save.**
+3. Authentication → **Settings → Authorized domains → Add domain** → your Render domain (e.g. `pryme-analyser.onrender.com`).
+4. **Build → Firestore Database → Create database** → Production mode → location `asia-south1` (Mumbai) → Enable.
+5. Firestore → **Rules** → paste the contents of `firestore.rules` → **Publish**.
+6. Project settings (⚙️) → **Your apps → Web (</>)** → register app → copy the config values.
+7. Render → your service → **Environment** → add:
+   - `FIREBASE_API_KEY` = apiKey
+   - `FIREBASE_AUTH_DOMAIN` = authDomain
+   - `FIREBASE_PROJECT_ID` = projectId
+   - `FIREBASE_APP_ID` = appId
+   Save → Render redeploys. Open the site → **Continue with Google**.
+
+Without these variables Pryme runs in "this device only" mode (no login).
