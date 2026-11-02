@@ -397,6 +397,7 @@ function renderLvlBox() {
     const pl = px != null && p.status === 'open' ? plOf(p, px) : null;
     const st = p.status === 'pending' ? p.type : p.tp1Hit ? 'TP1 ✓ · SL at entry' : 'In trade';
     html += `<div class="lb-pos"><div class="r"><span><span class="tag ${p.dir}">${p.dir === 'long' ? 'BUY' : 'SELL'}</span> ${p.acc === 'real' ? 'REAL' : 'DEMO'} · ${esc(st)}</span><b class="${pl == null ? '' : pl >= 0 ? 'up' : 'down'}">${pl == null ? '' : (pl >= 0 ? '+' : '') + money(pl, p.cur)}</b></div>
+      ${p.status === 'open' && px != null ? `<div class="r"><span>Pips</span><b class="${pipsOpen(p, px) >= 0 ? 'up' : 'down'}">${fmtPips(pipsOpen(p, px))}</b></div>` : ''}
       <div class="r"><span>E ${fmt(p.entry, p.prec)} · SL ${fmt(p.sl, p.prec)}</span><span>TP ${p.tp1Hit ? '✓' : fmt(p.tp1, p.prec)} / ${fmt(p.tp2, p.prec)}</span></div></div>`;
   });
   box.innerHTML = html;
@@ -1019,7 +1020,7 @@ function createPosition(accKey, s, { entry, sl, tp1, tp2, units, market = false,
   const isM = type.startsWith('MARKET');
   const pos = {
     id: uid(), acc: accKey, market: S.market, symbol: S.symbol.toUpperCase(), tf: S.tf, dir: s.direction, type,
-    entry: isM ? price : entry, sl, sl0: sl, tp1, tp2, units, remaining: units, cur: curOf(S.market),
+    entry: isM ? price : entry, sl, sl0: sl, tp1, tp2, units, remaining: units, cur: curOf(S.market), pip: pipSizeFor(S.market, S.symbol, entry),
     factor: quoteFactor(S.market, S.symbol, entry), status: isM ? 'open' : 'pending', created: Date.now(), opened: isM ? Date.now() : null,
     realized: 0, tp1Hit: false, lastBar: startBar(Date.now()) + 60, prec: S.prec, name: s.name, auto, batch: S.batch, sigId: s.sigId
   };
@@ -1134,11 +1135,14 @@ function setAcctView(v) { S.acctView = v; $$('#acctViewSeg button').forEach(b =>
 function setAcctTab(t) { S.acctTab = t; $$('.tabs2 button').forEach(b => b.classList.toggle('on', b.dataset.dt === t)); renderAccounts(); }
 function renderAccounts() {
   const v = S.acctView, d = S.accounts[v];
-  const fl = { USD: 0, LKR: 0 };
+  const fl = { USD: 0, LKR: 0 }; let flPips = 0;
   d.positions.filter(p => p.status === 'open').forEach(p => {
     const px = S.livePrices[p.market + '|' + p.symbol]; if (px == null) return;
     fl[p.cur] += (px - p.entry) * (p.dir === 'long' ? 1 : -1) * p.remaining * p.factor;
+    flPips += pipsOpen(p, px);
   });
+  const pEl = $('#aPips'); if (pEl) { pEl.textContent = fmtPips(flPips); pEl.className = flPips >= 0 ? 'up' : 'down'; }
+  $('#histPanel').classList.toggle('hidden', S.acctTab !== 'hist');
   $('#aBalUSD').textContent = money(d.USD, 'USD'); $('#aBalLKR').textContent = money(d.LKR, 'LKR');
   const fEl = $('#aFloat'); fEl.textContent = `${money(fl.USD, 'USD')}${fl.LKR ? ' · ' + money(fl.LKR, 'LKR') : ''}`; fEl.className = (fl.USD + fl.LKR) >= 0 ? 'up' : 'down';
   const wins = d.history.filter(h => h.pnl > 0).length;
@@ -1150,14 +1154,13 @@ function renderAccounts() {
   const t = $('#posTable');
   if (S.acctTab === 'open') {
     if (!d.positions.length) { t.innerHTML = `<tr><td style="color:var(--dim);padding:18px 8px">No open ${ACC_LABEL[v].toLowerCase()} trades.</td></tr>`; return; }
-    t.innerHTML = '<tr><th>Symbol</th><th>Side</th><th>Status</th><th>Entry</th><th>SL</th><th>TP1</th><th>TP2</th><th>Size</th><th>Now</th><th>P/L</th><th></th></tr>' + d.positions.map(p => {
+    t.innerHTML = '<tr><th>Symbol</th><th>Side</th><th>Status</th><th>Entry</th><th>SL</th><th>TP1</th><th>TP2</th><th>Size</th><th>Now</th><th>Pips</th><th>P/L</th><th></th></tr>' + d.positions.map(p => {
       const px = S.livePrices[p.market + '|' + p.symbol];
       const pl = p.status === 'open' && px != null ? (px - p.entry) * (p.dir === 'long' ? 1 : -1) * p.remaining * p.factor + p.realized : p.realized;
-      return `<tr><td>${esc(p.symbol)} <small style="color:var(--dim)">${p.tf}</small>${p.auto ? ' <small class="autotag">AUTO</small>' : ''}</td><td class="${p.dir === 'long' ? 'up' : 'down'}">${p.dir === 'long' ? 'BUY' : 'SELL'}</td><td>${p.status === 'pending' ? esc(p.type) : p.tp1Hit ? 'Open · TP1 ✓' : 'Open'}</td><td>${fmt(p.entry, p.prec)}</td><td>${fmt(p.sl, p.prec)}</td><td>${fmt(p.tp1, p.prec)}</td><td>${fmt(p.tp2, p.prec)}</td><td>${(+p.remaining).toPrecision(4)}</td><td>${px != null ? fmt(px, p.prec) : '…'}</td><td class="${pl >= 0 ? 'up' : 'down'}">${money(pl, p.cur)}</td><td class="acts">${p.status === 'open' ? `${!p.tp1Hit ? `<button class="mk ok" data-mark="tp1" data-id="${p.id}">TP1 ✓</button>` : ''}<button class="mk ok" data-mark="tp2" data-id="${p.id}">TP2 ✓</button><button class="mk bad" data-mark="sl" data-id="${p.id}">${p.tp1Hit ? 'BE' : 'SL ✗'}</button>` : ''}<button class="x" data-close-pos="${p.id}">${p.status === 'pending' ? 'Cancel' : 'Close'}</button></td></tr>`;
+      return `<tr><td>${esc(p.symbol)} <small style="color:var(--dim)">${p.tf}</small>${p.auto ? ' <small class="autotag">AUTO</small>' : ''}</td><td class="${p.dir === 'long' ? 'up' : 'down'}">${p.dir === 'long' ? 'BUY' : 'SELL'}</td><td>${p.status === 'pending' ? esc(p.type) : p.tp1Hit ? 'Open · TP1 ✓' : 'Open'}</td><td>${fmt(p.entry, p.prec)}</td><td>${fmt(p.sl, p.prec)}</td><td>${fmt(p.tp1, p.prec)}</td><td>${fmt(p.tp2, p.prec)}</td><td>${fmtSize(p, p.remaining)}</td><td>${px != null ? fmt(px, p.prec) : '…'}</td>${(() => { const pp = p.status === 'open' && px != null ? pipsOpen(p, px) : null; return `<td class="${pp == null ? '' : pp >= 0 ? 'up' : 'down'}">${pp == null ? '—' : fmtPips(pp)}</td>`; })()}<td class="${pl >= 0 ? 'up' : 'down'}">${money(pl, p.cur)}</td><td class="acts">${p.status === 'open' ? `${!p.tp1Hit ? `<button class="mk ok" data-mark="tp1" data-id="${p.id}">TP1 ✓</button>` : ''}<button class="mk ok" data-mark="tp2" data-id="${p.id}">TP2 ✓</button><button class="mk bad" data-mark="sl" data-id="${p.id}">${p.tp1Hit ? 'BE' : 'SL ✗'}</button>` : ''}<button class="x" data-close-pos="${p.id}">${p.status === 'pending' ? 'Cancel' : 'Close'}</button></td></tr>`;
     }).join('');
   } else {
-    if (!d.history.length) { t.innerHTML = '<tr><td style="color:var(--dim);padding:18px 8px">No closed trades yet.</td></tr>'; return; }
-    t.innerHTML = '<tr><th>Closed</th><th>Symbol</th><th>Side</th><th>Entry</th><th>Exit</th><th>Result</th><th>P/L</th></tr>' + d.history.slice(0, 100).map(h => `<tr><td>${new Date(h.closed).toLocaleString('en-GB', { timeZone: 'Asia/Colombo', day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' })}</td><td>${esc(h.symbol)}</td><td class="${h.dir === 'long' ? 'up' : 'down'}">${h.dir === 'long' ? 'BUY' : 'SELL'}</td><td>${fmt(h.entry, h.prec)}</td><td>${fmt(h.exit, h.prec)}</td><td>${esc(h.reason)}</td><td class="${h.pnl >= 0 ? 'up' : 'down'}">${h.pnl >= 0 ? '+' : ''}${money(h.pnl, h.cur)}</td></tr>`).join('');
+    renderHistory(v, d, t);
   }
 }
 // Mark TP/SL yourself (e.g. your broker / TradingView showed it hit). Closes at the exact level and triggers the next setup.
@@ -1378,7 +1381,7 @@ function drawPositions(force = true) {
   chartItems().forEach(p => {
     const side = p.dir === 'long' ? 'BUY' : 'SELL', A = p.acc === 'real' ? 'REAL' : 'DEMO';
     const pl = px != null && p.status === 'open' ? plOf(p, px) : null;
-    const lbl = p.status === 'pending' ? `${A} ${p.type}` : `${A} ${side} ${(+p.remaining).toPrecision(3)}${pl != null ? `  ${pl >= 0 ? '+' : ''}${money(pl, p.cur)}` : ''}`;
+    const lbl = p.status === 'pending' ? `${A} ${p.type}` : `${A} ${side} ${(+p.remaining).toPrecision(3)}${pl != null ? `  ${fmtPips(pipsOpen(p, px))}  ${pl >= 0 ? '+' : ''}${money(pl, p.cur)}` : ''}`;
     add(p.entry, p.status === 'pending' ? '#8892a4' : '#4ea8ff', lbl, p.status === 'pending' ? 2 : 0, 2);
     add(p.sl, '#ff4d6d', p.tp1Hit ? 'SL (BE)' : 'SL', 0, 1);
     if (!p.tp1Hit) add(p.tp1, '#19e3a2', 'TP1', 2, 1);
@@ -1560,9 +1563,163 @@ function drawTvPositions() {
   } catch (e) { console.warn('TradingView drawing failed', e); }
 }
 
+/* ================================================================
+   PIPS + PERFORMANCE (history periods, stats, equity curve, CSV)
+   ================================================================ */
+// pip size: forex 0.0001 (JPY pairs 0.01), gold 0.10, silver 0.01, indices 1.0,
+// stocks / CSE 0.01, crypto ≈ 4 significant digits (BTC $1, ETH $0.1, SOL $0.01 …)
+function pipSizeFor(market, symbol, price) {
+  const s = String(symbol || '').toUpperCase();
+  if (market === 'forex') {
+    if (/^XAU|^GOLD/.test(s)) return 0.1;
+    if (/^XAG|^SILVER/.test(s)) return 0.01;
+    if (/OIL|WTI/.test(s)) return 0.01;
+    if (s === 'DXY') return 0.01;
+    if (/NAS100|US30|SPX500|US500|US100|GER40|UK100|JP225|NDX|DJI/.test(s)) return 1;
+    if (/^[A-Z]{6}$/.test(s)) return s.endsWith('JPY') ? 0.01 : 0.0001;
+    return 0.0001;
+  }
+  if (market === 'crypto') { const p = Math.abs(+price) || 1; return Math.pow(10, Math.floor(Math.log10(p)) - 4); }
+  return 0.01;
+}
+const pipOf = p => p.pip || pipSizeFor(p.market, p.symbol, p.entry);
+// size as traders read it: forex/metals in lots, crypto in coins, stocks in shares
+function fmtSize(p, units) {
+  const u = +units; if (!(u > 0)) return '—';
+  const cs = contractSize(p.market, p.symbol);
+  if (cs > 1) return `${(u / cs).toLocaleString('en-US', { maximumFractionDigits: 2, minimumFractionDigits: 2 })} lot`;
+  if (p.market === 'crypto') return u.toLocaleString('en-US', { maximumSignificantDigits: 4 });
+  return Math.round(u).toLocaleString('en-US');
+}
+const pipsOpen = (p, px) => (px - p.entry) * (p.dir === 'long' ? 1 : -1) / pipOf(p);
+// closed trade pips = size-weighted average move (handles the TP1 half-close correctly)
+const pipsClosed = h => (h.units && h.factor) ? h.pnl / (h.units * h.factor) / pipOf(h) : (h.exit - h.entry) * (h.dir === 'long' ? 1 : -1) / pipOf(h);
+const fmtPips = v => `${v >= 0 ? '+' : '−'}${Math.abs(v).toLocaleString('en-US', { maximumFractionDigits: 1, minimumFractionDigits: 1 })}`;
+const PERIODS = [['24h', '24H', 864e5], ['3d', '3 days', 3 * 864e5], ['7d', '7 days', 7 * 864e5], ['30d', '30 days', 30 * 864e5], ['1y', '1 year', 365 * 864e5], ['all', 'All', Infinity]];
+S.histPeriod = store.get('pa_hperiod', '7d');
+S.histSymbol = 'all';
+function durTxt(ms) {
+  if (!(ms > 0)) return '—';
+  const m = Math.round(ms / 60000); if (m < 60) return m + 'm';
+  const h = Math.floor(m / 60); if (h < 48) return `${h}h ${m % 60}m`;
+  return Math.round(h / 24) + 'd';
+}
+function periodTrades(d) {
+  const span = (PERIODS.find(x => x[0] === S.histPeriod) || PERIODS[2])[2];
+  const from = Date.now() - span;
+  return d.history.filter(h => (h.closed || 0) >= from && (S.histSymbol === 'all' || h.symbol === S.histSymbol));
+}
+function calcStats(list) {
+  const eps = 1e-9, n = list.length;
+  const wins = list.filter(h => h.pnl > eps), losses = list.filter(h => h.pnl < -eps);
+  const pips = list.map(pipsClosed);
+  const pipsWon = pips.filter(x => x > 0).reduce((a, b) => a + b, 0);
+  const pipsLost = -pips.filter(x => x < 0).reduce((a, b) => a + b, 0);
+  const curs = [...new Set(list.map(h => h.cur))];
+  const main = curs.includes('USD') || !curs.length ? 'USD' : curs[0];
+  const net = {}; curs.forEach(c => net[c] = list.filter(h => h.cur === c).reduce((a, h) => a + h.pnl, 0));
+  const mainList = list.filter(h => h.cur === main);
+  const gp = mainList.filter(h => h.pnl > 0).reduce((a, h) => a + h.pnl, 0), gl = -mainList.filter(h => h.pnl < 0).reduce((a, h) => a + h.pnl, 0);
+  // equity curve + max drawdown (oldest → newest)
+  const chron = [...mainList].sort((a, b) => a.closed - b.closed);
+  let eq = 0, peak = 0, dd = 0; const curve = [0];
+  chron.forEach(h => { eq += h.pnl; curve.push(eq); peak = Math.max(peak, eq); dd = Math.max(dd, peak - eq); });
+  // current streak
+  let streak = 0, streakType = '';
+  for (const h of [...list].sort((a, b) => b.closed - a.closed)) {
+    const t = h.pnl > eps ? 'W' : h.pnl < -eps ? 'L' : '';
+    if (!t) continue; if (!streakType) streakType = t; if (t !== streakType) break; streak++;
+  }
+  const withPips = list.map((h, i) => ({ h, p: pips[i] }));
+  const best = withPips.reduce((m, x) => !m || x.p > m.p ? x : m, null), worst = withPips.reduce((m, x) => !m || x.p < m.p ? x : m, null);
+  const holds = list.map(h => h.closed - (h.opened || h.created)).filter(x => x > 0);
+  return {
+    n, wins: wins.length, losses: losses.length, be: n - wins.length - losses.length,
+    winRate: (wins.length + losses.length) ? wins.length / (wins.length + losses.length) * 100 : null,
+    pipsWon, pipsLost, netPips: pipsWon - pipsLost, net, main, gp, gl,
+    pf: gl > 0 ? gp / gl : gp > 0 ? Infinity : null,
+    avgWinPips: wins.length ? wins.reduce((a, h) => a + pipsClosed(h), 0) / wins.length : null,
+    avgLossPips: losses.length ? -losses.reduce((a, h) => a + pipsClosed(h), 0) / losses.length : null,
+    expectancy: n ? (pipsWon - pipsLost) / n : null,
+    curve, dd, streak, streakType, best, worst,
+    avgHold: holds.length ? holds.reduce((a, b) => a + b, 0) / holds.length : null
+  };
+}
+function equitySVG(curve, cur) {
+  if (curve.length < 2) return '<div class="eq-empty">The equity curve appears after your first closed trades.</div>';
+  const W = 600, H = 120, P = 6, min = Math.min(...curve), max = Math.max(...curve), rng = (max - min) || 1;
+  const X = i => P + i * (W - 2 * P) / (curve.length - 1), Y = v => H - P - (v - min) * (H - 2 * P) / rng;
+  const pts = curve.map((v, i) => `${X(i).toFixed(1)},${Y(v).toFixed(1)}`).join(' ');
+  const last = curve[curve.length - 1], col = last >= 0 ? 'var(--long)' : 'var(--short)';
+  return `<svg viewBox="0 0 ${W} ${H}" preserveAspectRatio="none" class="eq-svg" role="img" aria-label="Equity curve">
+    <line x1="${P}" x2="${W - P}" y1="${Y(0)}" y2="${Y(0)}" class="eq-zero"/>
+    <polygon points="${X(0)},${Y(0)} ${pts} ${X(curve.length - 1)},${Y(0)}" style="fill:${col};opacity:.12"/>
+    <polyline points="${pts}" style="fill:none;stroke:${col};stroke-width:2;vector-effect:non-scaling-stroke"/>
+  </svg><div class="eq-foot"><span>Start</span><b class="${last >= 0 ? 'up' : 'down'}">${last >= 0 ? '+' : ''}${money(last, cur)}</b></div>`;
+}
+function renderHistory(v, d, t) {
+  const panel = $('#histPanel');
+  const symbols = [...new Set(d.history.map(h => h.symbol))].sort();
+  if (S.histSymbol !== 'all' && !symbols.includes(S.histSymbol)) S.histSymbol = 'all';
+  const list = periodTrades(d), st = calcStats(list);
+  const netTxt = Object.keys(st.net).length ? Object.entries(st.net).map(([c, x]) => `${x >= 0 ? '+' : ''}${money(x, c)}`).join(' · ') : money(0, 'USD');
+  const netPos = Object.values(st.net).reduce((a, b) => a + b, 0) >= 0;
+  const card = (label, val, cls = '', sub = '') => `<div class="st-card"><small>${label}</small><b class="${cls}">${val}</b>${sub ? `<span>${sub}</span>` : ''}</div>`;
+  panel.innerHTML = `
+    <div class="hp-bar">
+      <div class="seg small period-seg">${PERIODS.map(([k, l]) => `<button data-period="${k}" class="${S.histPeriod === k ? 'on' : ''}">${l}</button>`).join('')}</div>
+      <div class="hp-right">
+        <select id="histSym" aria-label="Symbol"><option value="all">All symbols</option>${symbols.map(x => `<option ${S.histSymbol === x ? 'selected' : ''}>${esc(x)}</option>`).join('')}</select>
+        <button class="ghost" id="btnCsv" ${list.length ? '' : 'disabled'}>⬇ Export CSV</button>
+      </div>
+    </div>
+    <div class="st-grid">
+      ${card('Trades', st.n, '', `${st.wins} won · ${st.losses} lost${st.be ? ` · ${st.be} BE` : ''}`)}
+      ${card('Win rate', st.winRate == null ? '—' : st.winRate.toFixed(1) + '%', st.winRate == null ? '' : st.winRate >= 50 ? 'up' : 'down')}
+      ${card('Pips won', fmtPips(st.pipsWon), 'up', `${st.wins} winning trades`)}
+      ${card('Pips lost', fmtPips(-st.pipsLost), 'down', `${st.losses} losing trades`)}
+      ${card('Net pips', fmtPips(st.netPips), st.netPips >= 0 ? 'up' : 'down', st.expectancy == null ? '' : `${fmtPips(st.expectancy)} per trade`)}
+      ${card('Net profit', netTxt, netPos ? 'up' : 'down')}
+      ${card('Profit factor', st.pf == null ? '—' : st.pf === Infinity ? '∞' : st.pf.toFixed(2), st.pf == null ? '' : st.pf >= 1 ? 'up' : 'down', 'gross profit ÷ gross loss')}
+      ${card('Avg win / loss', `${st.avgWinPips == null ? '—' : fmtPips(st.avgWinPips)} / ${st.avgLossPips == null ? '—' : fmtPips(-st.avgLossPips)}`, '', 'pips')}
+      ${card('Max drawdown', st.dd ? '−' + money(st.dd, st.main) : money(0, st.main), st.dd ? 'down' : '', 'from equity peak')}
+      ${card('Best trade', st.best ? fmtPips(st.best.p) : '—', 'up', st.best ? esc(st.best.h.symbol) : '')}
+      ${card('Worst trade', st.worst ? fmtPips(st.worst.p) : '—', 'down', st.worst ? esc(st.worst.h.symbol) : '')}
+      ${card('Streak', st.streak ? `${st.streak} ${st.streakType === 'W' ? 'wins' : 'losses'}` : '—', st.streakType === 'W' ? 'up' : st.streakType === 'L' ? 'down' : '', st.avgHold ? `avg hold ${durTxt(st.avgHold)}` : '')}
+    </div>
+    <div class="eq-wrap"><div class="eq-head">Equity curve <small>${(PERIODS.find(x => x[0] === S.histPeriod) || [])[1] || ''} · ${st.main}</small></div>${equitySVG(st.curve, st.main)}</div>
+    ${symbols.length > 1 && S.histSymbol === 'all' && list.length ? `<div class="by-sym"><div class="eq-head">By symbol</div><table><tr><th>Symbol</th><th>Trades</th><th>Win %</th><th>Net pips</th><th>P/L</th></tr>${[...new Set(list.map(h => h.symbol))].map(sym => { const x = calcStats(list.filter(h => h.symbol === sym)); const pl = Object.entries(x.net).map(([c, v]) => `${v >= 0 ? '+' : ''}${money(v, c)}`).join(' · '); return `<tr><td>${esc(sym)}</td><td>${x.n}</td><td>${x.winRate == null ? '—' : x.winRate.toFixed(0) + '%'}</td><td class="${x.netPips >= 0 ? 'up' : 'down'}">${fmtPips(x.netPips)}</td><td class="${Object.values(x.net).reduce((a, b) => a + b, 0) >= 0 ? 'up' : 'down'}">${pl}</td></tr>`; }).join('')}</table></div>` : ''}`;
+  if (!list.length) { t.innerHTML = `<tr><td style="color:var(--dim);padding:18px 8px">No closed ${ACC_LABEL[v].toLowerCase()} trades in this period.</td></tr>`; return; }
+  t.innerHTML = '<tr><th>Closed</th><th>Symbol</th><th>Side</th><th>Entry</th><th>Exit</th><th>Size</th><th>Pips</th><th>Hold</th><th>Result</th><th>P/L</th></tr>' + list.slice(0, 300).map(h => {
+    const pp = pipsClosed(h);
+    return `<tr><td>${new Date(h.closed).toLocaleString('en-GB', { timeZone: 'Asia/Colombo', day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' })}</td><td>${esc(h.symbol)}</td><td class="${h.dir === 'long' ? 'up' : 'down'}">${h.dir === 'long' ? 'BUY' : 'SELL'}</td><td>${fmt(h.entry, h.prec)}</td><td>${fmt(h.exit, h.prec)}</td><td>${fmtSize(h, h.units)}</td><td class="${pp >= 0 ? 'up' : 'down'}">${fmtPips(pp)}</td><td>${durTxt(h.closed - (h.opened || h.created))}</td><td>${esc(h.reason)}</td><td class="${h.pnl >= 0 ? 'up' : 'down'}">${h.pnl >= 0 ? '+' : ''}${money(h.pnl, h.cur)}</td></tr>`;
+  }).join('');
+}
+function exportCSV() {
+  const d = S.accounts[S.acctView], list = periodTrades(d);
+  const q = v => `"${String(v ?? '').replace(/"/g, '""')}"`;
+  const rows = [['Opened', 'Closed', 'Account', 'Market', 'Symbol', 'Side', 'Entry', 'Exit', 'Stop loss', 'TP1', 'TP2', 'Size', 'Pips', 'P/L', 'Currency', 'Result', 'Setup']]
+    .concat(list.map(h => [new Date(h.opened || h.created).toISOString(), new Date(h.closed).toISOString(), ACC_LABEL[S.acctView], h.market, h.symbol, h.dir === 'long' ? 'BUY' : 'SELL', h.entry, h.exit, h.sl0 ?? h.sl, h.tp1, h.tp2, h.units, pipsClosed(h).toFixed(1), (+h.pnl).toFixed(2), h.cur, h.reason, h.name]));
+  const blob = new Blob(['﻿' + rows.map(r => r.map(q).join(',')).join('\n')], { type: 'text/csv' });
+  const a = document.createElement('a'); a.href = URL.createObjectURL(blob);
+  a.download = `pryme-${S.acctView}-${S.histPeriod}-${new Date().toISOString().slice(0, 10)}.csv`;
+  document.body.appendChild(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(a.href), 2000);
+  toast(`Exported ${list.length} trades`);
+}
+function wireHistory() {
+  const panel = $('#histPanel');
+  panel.addEventListener('click', e => {
+    const b = e.target.closest('[data-period]');
+    if (b) { S.histPeriod = b.dataset.period; store.set('pa_hperiod', S.histPeriod); renderAccounts(); return; }
+    if (e.target.closest('#btnCsv')) exportCSV();
+  });
+  panel.addEventListener('change', e => { if (e.target.id === 'histSym') { S.histSymbol = e.target.value; renderAccounts(); } });
+}
+
 /* ---------------- boot ---------------- */
 initChart();
 wire();
+wireHistory();
 $$('#tfSeg button').forEach(b => b.classList.toggle('on', b.dataset.tf === S.tf));
 setAcctView(S.acctView);
 setMarket(S.market).then(renderSignals);
