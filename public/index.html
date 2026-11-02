@@ -24,13 +24,27 @@
     </div>
   </div>
   <div class="top-right">
+    <span class="hello" id="helloName"></span>
+    <div class="sync-pill" id="syncPill" title="Where your data is saved"><i></i><span>…</span></div>
     <div class="live-pill" id="livePill"><i></i><span>CONNECTING</span></div>
     <button class="chip" id="demoChip" title="Demo wallet">DEMO <b id="demoChipBal">$0</b></button>
+    <button class="icon-btn" id="btnHelp" title="How to use Pryme" aria-label="Help"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M9.5 9.5a2.5 2.5 0 1 1 3.5 2.3c-.6.3-1 .9-1 1.6V14"/><circle cx="12" cy="17.2" r=".6" fill="currentColor"/></svg></button>
     <button class="icon-btn" id="btnSettings" title="AI keys & settings" aria-label="Settings">
       <svg viewBox="0 0 24 24"><path d="M12 15.5a3.5 3.5 0 1 0 0-7 3.5 3.5 0 0 0 0 7Z"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1Z"/></svg>
     </button>
+    <div class="profile-wrap">
+      <button class="profile-btn" id="profileBtn" aria-label="Profile"></button>
+      <div class="profile-menu hidden" id="profileMenu">
+        <div class="pm-head"><span id="pmAvatar"></span><div><b id="pmName">Trader</b><small id="pmEmail"></small></div></div>
+        <button id="pmEdit">✎ Edit profile</button>
+        <button id="pmHelp">? How to use Pryme</button>
+        <button id="pmSignIn" class="hidden">Sign in with Google</button>
+        <button id="pmSignOut" class="hidden danger">Sign out</button>
+      </div>
+    </div>
   </div>
 </header>
+<button class="sync-banner hidden" id="syncBanner">Your data changed on another device — tap to load the latest</button>
 
 <section class="controls">
   <div class="seg" id="marketSeg">
@@ -270,10 +284,74 @@
   </div>
 </div>
 
+<!-- LOGIN GATE -->
+<div class="gate hidden" id="gate">
+  <div class="gate-box">
+    <svg viewBox="0 0 64 64" class="logo big"><path d="M10 46 L24 30 L33 39 L54 16" stroke="currentColor" stroke-width="6" fill="none" stroke-linecap="round" stroke-linejoin="round"/><circle cx="54" cy="16" r="5" fill="currentColor"/></svg>
+    <h1>PRYME <span>ANALYSER</span></h1>
+    <p class="gate-sub">AI chart analysis for Forex, Crypto, CSE 🇱🇰 and Stocks</p>
+    <div id="gateLoading" class="gate-loading"><span class="spin"></span></div>
+    <div id="gateLogin" class="hidden">
+      <ul class="gate-feats">
+        <li>📈 Live charts + AI entries with SL & TP</li>
+        <li>💼 Demo and Real accounts with auto TP / SL tracking</li>
+        <li>☁️ Everything saved to your Google account — open it on any device</li>
+      </ul>
+      <button class="google-btn" id="gateGoogle"><svg viewBox="0 0 48 48" width="20" height="20"><path fill="#FFC107" d="M43.6 20.5H42V20H24v8h11.3C33.7 32.7 29.2 36 24 36c-6.6 0-12-5.4-12-12s5.4-12 12-12c3.1 0 5.9 1.2 8 3.1l5.7-5.7C34 6.1 29.3 4 24 4 12.9 4 4 12.9 4 24s8.9 20 20 20 20-8.9 20-20c0-1.3-.1-2.4-.4-3.5z"/><path fill="#FF3D00" d="M6.3 14.7l6.6 4.8C14.7 15.1 19 12 24 12c3.1 0 5.9 1.2 8 3.1l5.7-5.7C34 6.1 29.3 4 24 4 16.3 4 9.7 8.3 6.3 14.7z"/><path fill="#4CAF50" d="M24 44c5.2 0 9.9-2 13.4-5.2l-6.2-5.2C29.2 35.1 26.7 36 24 36c-5.2 0-9.6-3.3-11.3-8l-6.5 5C9.5 39.6 16.2 44 24 44z"/><path fill="#1976D2" d="M43.6 20.5H42V20H24v8h11.3c-.8 2.2-2.2 4.2-4.1 5.6l6.2 5.2C37 39.2 44 34 44 24c0-1.3-.1-2.4-.4-3.5z"/></svg>Continue with Google</button>
+      <button class="link-btn" id="gateGuest">Try without an account (saved on this device only)</button>
+    </div>
+    <p class="gate-msg" id="gateMsg"></p>
+  </div>
+</div>
+
+<!-- PROFILE MODAL -->
+<div class="modal hidden" id="profileModal">
+  <div class="modal-box small">
+    <div class="modal-head">
+      <h3>Your profile</h3>
+      <button class="icon-btn" data-close aria-label="Close"><svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18"/></svg></button>
+    </div>
+    <div class="pf-top">
+      <div id="pfPreview"></div>
+      <label class="ghost upload-btn">📷 Upload photo<input type="file" id="pfUpload" accept="image/*" hidden></label>
+    </div>
+    <label>Name<input type="text" id="pfName" maxlength="40" placeholder="Your name" autocomplete="name"></label>
+    <div class="pf-label">Or pick an icon</div>
+    <div class="ava-grid" id="pfAvatars"></div>
+    <div class="modal-foot"><button class="primary" id="pfSave">Save profile</button></div>
+  </div>
+</div>
+
+<!-- WELCOME GUIDE -->
+<div class="modal hidden" id="welcomeModal">
+  <div class="modal-box">
+    <div class="modal-head">
+      <h3>Welcome to Pryme 👋</h3>
+      <button class="icon-btn" data-close aria-label="Close"><svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18"/></svg></button>
+    </div>
+    <ol class="steps">
+      <li><b>Pick your account.</b> <span>Demo to practise, Real to track your broker trades. Set the balance with <i>Edit balance</i>.</span></li>
+      <li><b>Add a free AI key.</b> <span>⚙️ → Add key (Groq or Gemini are free). Without a key Pryme still gives setups from its own engine.</span></li>
+      <li><b>Choose a market & symbol, then tap <i>Analyse with AI</i>.</b> <span>You get 3–4 setups with Entry, SL and TP, graded A+ to C.</span></li>
+      <li><b>Take a trade.</b> <span>"Take on Demo" or "Took on Real". Pryme watches the live price — TP1, TP2 and SL close automatically and the next setup appears.</span></li>
+    </ol>
+    <p class="fine">Signed in? Everything is saved to your Google account automatically — look for <b>Saved</b> at the top.</p>
+    <div class="wc-actions">
+      <button class="ghost" id="wcBalance">Set my balance</button>
+      <button class="ghost" id="wcKeys">Add AI key</button>
+      <button class="primary" id="wcDone">Let's start</button>
+    </div>
+  </div>
+</div>
+
 <div class="toast hidden" id="toast"></div>
 
 <!-- TradingView Advanced Charts (optional): put the library in public/charting_library/ -->
 <script src="charting_library/charting_library.standalone.js" onerror="this.remove()"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-auth-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore-compat.js"></script>
 <script src="app.js"></script>
+<script src="cloud.js"></script>
 </body>
 </html>
