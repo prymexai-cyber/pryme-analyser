@@ -351,3 +351,33 @@ td.acts{display:flex;gap:4px;justify-content:flex-end}
 .spin{width:28px;height:28px;border:3px solid var(--line2);border-top-color:var(--brand);border-radius:50%;animation:spin .8s linear infinite}
 @media (max-width:760px){.hello{display:none}}
 @media (max-width:560px){.sync-pill span{display:none}.sync-pill{padding:8px}#btnHelp{display:none}.chip{display:none}}
+
+.steps a{color:var(--brand)}
+.steps code{font-family:var(--mono);color:var(--brand);font-size:12px}
+
+/* ===== performance / history ===== */
+.hist-panel{margin:6px 0 14px}
+.hp-bar{display:flex;flex-wrap:wrap;gap:10px;align-items:center;justify-content:space-between;margin-bottom:12px}
+.hp-right{display:flex;gap:8px;align-items:center}
+.hp-right select{width:auto;padding:8px 10px;font-size:13px}
+.hp-right .ghost{padding:8px 12px;font-size:13px}
+.hp-right .ghost:disabled{opacity:.4;cursor:default}
+.period-seg{overflow-x:auto}
+.period-seg button{white-space:nowrap}
+.st-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:8px}
+.st-card{background:var(--bg);border:1px solid var(--line);border-radius:12px;padding:10px 12px;min-width:0}
+.st-card small{display:block;font-size:10px;letter-spacing:.1em;text-transform:uppercase;color:var(--dim)}
+.st-card b{display:block;font:700 17px var(--mono);margin-top:4px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.st-card span{display:block;font:400 11px var(--mono);color:var(--muted);margin-top:3px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.eq-wrap,.by-sym{margin-top:12px;background:var(--bg);border:1px solid var(--line);border-radius:12px;padding:12px}
+.eq-head{font-size:12px;letter-spacing:.1em;text-transform:uppercase;color:var(--muted);margin-bottom:8px}
+.eq-head small{letter-spacing:0;text-transform:none;color:var(--dim);font:400 11px var(--mono);margin-left:6px}
+.eq-svg{width:100%;height:120px;display:block}
+.eq-zero{stroke:var(--line2);stroke-dasharray:4 4;vector-effect:non-scaling-stroke}
+.eq-foot{display:flex;justify-content:space-between;font:400 11px var(--mono);color:var(--dim);margin-top:4px}
+.eq-foot b{font-size:13px}
+.eq-empty{font-size:13px;color:var(--dim);padding:20px 0;text-align:center}
+.by-sym table{white-space:nowrap}
+@media (max-width:560px){.st-grid{grid-template-columns:repeat(2,1fr)}.st-card b{font-size:15px}.hp-right{width:100%}.hp-right select{flex:1}}
+.by-sym{overflow-x:auto}
+@media (max-width:560px){.period-seg{width:100%}.period-seg button{flex:1;padding:7px 4px;font-size:12px}}
