@@ -451,6 +451,14 @@ app.get('/api/search', async (req, res) => {
   }
 });
 
+/* ---------- ECONOMIC CALENDAR (high-impact news filter) ---------- */
+app.get('/api/calendar', async (_, res) => {
+  try {
+    const rows = await cached('ffcal', 60 * 60 * 1000, () => fetchJSON('https://nfs.faireconomy.media/ff_calendar_thisweek.json', {}, 12000));
+    res.json({ events: (Array.isArray(rows) ? rows : []).filter(e => /high|medium/i.test(e.impact || '')).map(e => ({ title: e.title, cur: e.country, t: Date.parse(e.date), impact: e.impact })) });
+  } catch (e) { res.json({ events: [], error: e.message }); }
+});
+
 /* ---------- NEWS (Google News RSS, free) ---------- */
 const CUR_NAMES = { USD: 'US dollar Fed', EUR: 'euro ECB', GBP: 'pound Bank of England', JPY: 'yen Bank of Japan', AUD: 'Australian dollar RBA', CAD: 'Canadian dollar', CHF: 'Swiss franc', NZD: 'New Zealand dollar', XAU: 'gold price', XAG: 'silver price' };
 function newsQuery(market, symbol, name) {
