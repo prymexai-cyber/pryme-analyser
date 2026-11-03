@@ -44,7 +44,8 @@ const S = {
   livePrices: {}, acctView: null, acctTab: 'open',
   autoBusy: false, autoQueue: [], autoRetry: {}, batch: store.get('pa_batch', 0), batchDone: {}
 };
-S.settings.auto = Object.assign({ enabled: true, trigger: 'tp1', onSL: true, expiryBars: 16, autoTake: 'off', minConf: 60, maxOpen: 2 }, S.settings.auto || {});
+S.settings.pro = Object.assign({ enabled: true, minRR: 1.8, minAdx: 18, minSlAtr: 1.3, newsMins: 45, streak: 2, pauseHours: 2, dailyPct: 3 }, S.settings.pro || {});
+S.settings.auto = Object.assign({ enabled: true, trigger: 'tp1', onSL: false, expiryBars: 16, autoTake: 'off', minConf: 60, maxOpen: 2 }, S.settings.auto || {});
 if (!S.accounts) {
   // migrate older single demo wallet
   const old = store.get('pa_demo', {});
@@ -663,6 +664,7 @@ function buildPrompt(I, htf, quant) {
     quantEngine: { score: quant.score, bias: quant.bias, candidateSetups: quant.setups.map(s => ({ name: s.name, direction: s.direction, entry: r(s.entry), stopLoss: r(s.stopLoss), tp1: r(s.tp1), tp2: r(s.tp2), tp3: r(s.tp3) })) },
     todaysHeadlines: S.news.slice(0, 8).map(n => n.title),
     recentSignalResultsOnThisSymbol: perfFor(S.symbol.toUpperCase()),
+    upcomingNews: newsNear(S.market, S.symbol, 6 * 60).map(e => `${e.cur} ${e.title} (${e.impact}) in ${Math.round((e.t - Date.now()) / 60000)} min`),
     account: { wallet: sz, balance: bal, currency: cur, riskPerTradePct: S.settings.riskPct }
   };
   return `Analyse this ${S.market.toUpperCase()} chart and give the best 3 to 4 trade setups on the ${S.tf} timeframe.
@@ -674,13 +676,14 @@ LAST 80 CANDLES (time UTC, open, high, low, close):
 ${cs.join('\n')}
 
 Rules:
-- Give exactly 3 or 4 setups. Mix entry styles where sensible (market now, pullback/limit at a zone, breakout/stop, or an opposite-direction setup at a key level if the market is ranging).
+- Give 1 to 4 setups. Only include setups you would really take; if the market has no clean edge (choppy, mid-range, news risk), give 1–2 conservative limit setups at strong levels and say so in the summary. Never invent counter-trend scalps just to fill the list.
 - Each setup: direction "long" or "short", entry, stopLoss, tp1, tp2, tp3 as plain numbers with ${p} decimals.
 - For long: stopLoss < entry < tp1 < tp2 < tp3. For short: stopLoss > entry > tp1 > tp2 > tp3.
 - Entries must be within ~3 ATR of current price. Use the candidate setups from the quant engine as a starting point but improve them with structure, liquidity and news.
 - confidence = honest probability (0-100) that TP1 is hit before SL.
 - WIN-RATE FIRST: quality over quantity. Rank the best setup first. Prefer entries at a level where liquidity was already swept or price is in discount (longs) / premium (shorts), aligned with the higher timeframe. Counter-trend ideas must get confidence below 50.
-- Put stops beyond the liquidity (beyond the swing + a small ATR buffer), never at an obvious round number where stops get hunted. TP1 must be realistic (before the nearest opposing level) so it gets hit often.
+- Put stops beyond the liquidity (beyond the swing + at least 0.3 ATR buffer) and NEVER closer than 1.3 × ATR from entry — tight stops inside the noise are the #1 cause of losses. Never at an obvious round number. TP1 about 1R (before the nearest opposing level) so it gets hit often; TP2 at least 2R.
+- Trend-following only when the higher timeframe agrees. If ADX < 18 (choppy), prefer limit entries at range extremes only. Avoid entries 45 minutes around high-impact news listed in upcomingNews.
 - Learn from recentSignalResultsOnThisSymbol: if recent signals were stopped out, adjust (wait for confirmation, wider/safer stop, or trade with the HTF trend only).
 - ${langLine()}
 
@@ -727,7 +730,7 @@ async function runAnalysis() {
       }
     }
     let setups = result ? cleanSetups(result.setups, S.ind) : [];
-    if (setups.length < 3) {
+    if (setups.length < 1) {
       const extra = quant.setups.filter(q => !setups.some(s => Math.abs(s.entry - q.entry) < S.ind.atr * 0.3));
       setups = setups.concat(extra).slice(0, 4);
     }
@@ -739,8 +742,9 @@ async function runAnalysis() {
       keyLevels: result?.keyLevels, invalidation: result?.invalidation, by, htf
     };
     const RANK = { 'A+': 4, A: 3, B: 2, C: 1 };
-    S.setups.forEach(s => s.grade = gradeOf(s, S.analysis));
-    S.setups.sort((a, b) => (RANK[b.grade] - RANK[a.grade]) || (b.confidence - a.confidence));
+    await loadCalendar();
+    S.setups.forEach(s => { proAdjust(s); s.grade = gradeOf(s, S.analysis); });
+    S.setups.sort((a, b) => ((b.ok ? 1 : 0) - (a.ok ? 1 : 0)) || (RANK[b.grade] - RANK[a.grade]) || (b.confidence - a.confidence));
     newSignalBatch();
     renderResult(S.analysis);
     if (setups.length) drawSetupLines(0);
@@ -752,6 +756,7 @@ async function runAnalysis() {
   }
 }
 function gradeOf(s, A) {
+  // old score (kept as one input) + the pro checklist
   let pts = 0;
   const rr = Math.abs(s.tp2 - s.entry) / Math.abs(s.entry - s.stopLoss);
   if (rr >= 2) pts += 2; else if (rr >= 1.5) pts += 1;
@@ -760,7 +765,14 @@ function gradeOf(s, A) {
   if (htf && ((htf === 'bullish' && d === 'long') || (htf === 'bearish' && d === 'short'))) pts += 2;
   else if (htf && htf !== 'neutral') pts -= 2;
   if ((A.bias.includes('BULL') && d === 'long') || (A.bias.includes('BEAR') && d === 'short')) pts += 1;
-  return pts >= 6 ? 'A+' : pts >= 4 ? 'A' : pts >= 2 ? 'B' : 'C';
+  s.checks = proChecks(s, A);
+  const failed = s.checks.filter(c => !c.ok);
+  const hardFail = failed.some(c => c.hard);
+  const P = S.settings.pro;
+  if (!P.enabled) { s.ok = pts >= 4; return pts >= 6 ? 'A+' : pts >= 4 ? 'A' : pts >= 2 ? 'B' : 'C'; }
+  s.ok = !hardFail && failed.length <= 1 && pts >= 3;
+  if (s.ok) return failed.length === 0 && pts >= 5 ? 'A+' : 'A';
+  return hardFail || failed.length >= 3 ? 'C' : 'B';
 }
 function perfFor(sym) {
   const list = S.sigStats.filter(x => x.symbol === sym).slice(-10);
@@ -781,6 +793,11 @@ function renderResult(A) {
   $('#aiBy').textContent = A.by + (A.htf ? ` · HTF ${A.htf.timeframe}: ${A.htf.bias}` : '');
   $('#summaryText').textContent = A.summary;
   $('#newsImpact').textContent = A.newsImpact ? '📰 ' + A.newsImpact : '';
+  const okN = S.setups.filter(s => s.ok).length, guard = riskGuard();
+  $('#proBanner').className = 'pro-banner ' + (guard.block ? 'stop' : okN ? 'go' : 'wait');
+  $('#proBanner').innerHTML = guard.block ? `⛔ <b>Trading paused</b> — ${esc(guard.why)}`
+    : okN ? `✓ <b>${okN} of ${S.setups.length}</b> setup${okN > 1 ? 's' : ''} passed the Pro checklist. Trade only the ones marked TRADE.`
+    : `⏸ <b>No high-probability trade right now.</b> Best move: wait. Pryme keeps watching and gives the next setup.`;
   const p = S.ind.price, a = S.ind.atr;
   $('#setups').innerHTML = S.setups.map((s, i) => {
     const z = sizing(s, S.market, S.symbol);
@@ -799,8 +816,9 @@ function renderResult(A) {
       </div>
       <div class="meta"><span>Size <b>${size}</b></span><span>Risk <b class="down">${money(z.riskAmt, z.cur)}</b></span><span>TP1 <b class="up">+${money(z.p1, z.cur)}</b></span><span>TP2 <b class="up">+${money(z.p2, z.cur)}</b></span>${z.lev > 1.05 ? `<span>Leverage ≈ <b>${z.lev.toFixed(1)}x</b></span>` : ''}</div>
       ${z.note ? `<div class="meta" style="margin-top:4px">${esc(z.note)}</div>` : ''}
+      ${s.checks ? `<div class="checks"><span class="verdict-tag ${s.ok ? 'ok' : 'watch'}">${s.ok ? '✓ TRADE' : '⏸ WATCH ONLY'}</span>${s.checks.map(c => `<span class="ck ${c.ok ? 'ok' : 'no'}" title="${esc(c.tip || '')}">${c.ok ? '✓' : '✗'} ${esc(c.label)}</span>`).join('')}</div>` : ''}
       <p class="why">${esc(s.reasoning)}</p>
-      <div class="setup-act"><button data-show="${i}">Show</button><button class="go" data-trade="${i}" data-acc="demo">Take on Demo</button><button class="real" data-trade="${i}" data-acc="real">Took on Real</button></div>
+      <div class="setup-act"><button data-show="${i}">Show</button><button class="go ${s.ok === false ? 'dim' : ''}" data-trade="${i}" data-acc="demo">Take on Demo</button><button class="real ${s.ok === false ? 'dim' : ''}" data-trade="${i}" data-acc="real">Took on Real</button></div>
     </div>`;
   }).join('');
   const kl = A.keyLevels;
@@ -853,7 +871,7 @@ function newSignalBatch() {
     const type = orderTypeOf(s, price, a), isM = type.startsWith('MARKET');
     const g = {
       id: uid(), batch: S.batch, idx: i, market: S.market, symbol: sym, tf: S.tf, dir: s.direction, type, name: s.name,
-      conf: s.confidence, grade: s.grade, entry: isM ? price : s.entry, sl: s.stopLoss, sl0: s.stopLoss, tp1: s.tp1, tp2: s.tp2, tp3: s.tp3,
+      conf: s.confidence, grade: s.grade, ok: s.ok, entry: isM ? price : s.entry, sl: s.stopLoss, sl0: s.stopLoss, tp1: s.tp1, tp2: s.tp2, tp3: s.tp3,
       prec: S.prec, status: isM ? 'active' : 'waiting', created: Date.now(), lastBar: startBar(Date.now()) + 60
     };
     S.signals.push(g); s.sigId = g.id;
@@ -865,7 +883,7 @@ function newSignalBatch() {
   if (S.settings.auto.autoTake === 'demo') autoTakeBest();
 }
 function recordStat(g, win) {
-  S.sigStats.push({ symbol: g.symbol, market: g.market, dir: g.dir, type: g.type, name: g.name, grade: g.grade, win, t: Date.now() });
+  S.sigStats.push({ symbol: g.symbol, market: g.market, dir: g.dir, type: g.type, name: g.name, grade: g.grade, ok: g.ok, win, t: Date.now() });
 }
 function processSignal(g, candles, live = false) {
   const sg = g.dir === 'long' ? 1 : -1;
@@ -910,6 +928,13 @@ function onSignalEvent(g, e) {
 }
 function requestNext(batch, market, symbol, tf, why) {
   if (!S.settings.auto.enabled) return;
+  const g = riskGuard(symbol);
+  if (g.block) {
+    addLog(`${why} → next setup paused: ${g.why}`);
+    clearTimeout(S.autoRetry['guard' + symbol]);
+    if (g.until) S.autoRetry['guard' + symbol] = setTimeout(() => requestNext(latestBatch(market, symbol), market, symbol, tf, `${symbol} pause ended`), Math.max(60000, g.until - Date.now()));
+    return;
+  }
   if (batch !== latestBatch(market, symbol) || S.batchDone[batch]) return;
   S.batchDone[batch] = true;
   addLog(`${why} → creating next setup…`);
@@ -947,7 +972,8 @@ function autoTakeBest() {
   const stale = acc.positions.filter(p => p.auto && p.status === 'pending' && p.symbol === sym);
   if (stale.length) acc.positions = acc.positions.filter(p => !stale.includes(p));
   if (open.length - stale.length >= A.maxOpen) { addLog(`Auto-take skipped: ${A.maxOpen} auto demo trades already open.`); return; }
-  const i = S.setups.findIndex(s => ['A+', 'A'].includes(s.grade) && s.confidence >= A.minConf);
+  if (riskGuard().block) { addLog(`Auto-take skipped: ${riskGuard().why}`); return; }
+  const i = S.setups.findIndex(s => s.ok && ['A+', 'A'].includes(s.grade) && s.confidence >= A.minConf);
   if (i < 0) { addLog(`${sym}: no A-grade setup ≥ ${A.minConf}% — auto-take skipped (waiting for a cleaner one).`); return; }
   const s = S.setups[i];
   const z = sizingFor('demo', s, S.market, S.symbol);
@@ -960,7 +986,8 @@ function autoTakeBest() {
 function renderSignals() {
   const st = S.sigStats, w = st.filter(x => x.win).length;
   const symSt = st.filter(x => x.symbol === S.symbol.toUpperCase()), sw = symSt.filter(x => x.win).length;
-  $('#sigRecord').textContent = st.length ? `AI record ${w}W/${st.length - w}L · ${(w / st.length * 100).toFixed(0)}%${symSt.length ? ` · this ${(sw / symSt.length * 100).toFixed(0)}%` : ''}` : 'no results yet';
+  const okSt = st.filter(x => x.ok), ow = okSt.filter(x => x.win).length;
+  $('#sigRecord').textContent = st.length ? `All ${(w / st.length * 100).toFixed(0)}% (${st.length})${okSt.length ? ` · TRADE-only ${(ow / okSt.length * 100).toFixed(0)}% (${okSt.length})` : ''}${symSt.length ? ` · this ${(sw / symSt.length * 100).toFixed(0)}%` : ''}` : 'no results yet';
   const sym = S.symbol.toUpperCase(), lb = latestBatch(S.market, sym);
   const list = S.signals.filter(g => (g.market === S.market && g.symbol === sym && g.batch === lb) || ['active', 'tp1'].includes(g.status))
     .sort((a, b) => b.batch - a.batch || a.idx - b.idx).slice(0, 10);
@@ -980,6 +1007,12 @@ function sizingFor(accKey, s, market, sym) {
 let pendingTrade = null;
 function openTradeModal(i, accKey) {
   const s = S.setups[i]; if (!s) return;
+  const guard = riskGuard();
+  if (guard.block && !confirm(`Trading is paused: ${guard.why}\n\nTake this trade anyway?`)) return;
+  if (s.ok === false) {
+    const why = (s.checks || []).filter(c => !c.ok).map(c => '• ' + c.label).join('\n');
+    if (!confirm(`This setup is WATCH ONLY — it failed:\n${why}\n\nMost losing trades come from setups like this. Take it anyway?`)) return;
+  }
   pendingTrade = { s, i };
   $('#tmAcc').value = accKey || S.settings.active;
   $('#tmEntry').value = +s.entry.toFixed(S.prec); $('#tmSL').value = +s.stopLoss.toFixed(S.prec);
@@ -1022,7 +1055,7 @@ function createPosition(accKey, s, { entry, sl, tp1, tp2, units, market = false,
     id: uid(), acc: accKey, market: S.market, symbol: S.symbol.toUpperCase(), tf: S.tf, dir: s.direction, type,
     entry: isM ? price : entry, sl, sl0: sl, tp1, tp2, units, remaining: units, cur: curOf(S.market), pip: pipSizeFor(S.market, S.symbol, entry),
     factor: quoteFactor(S.market, S.symbol, entry), status: isM ? 'open' : 'pending', created: Date.now(), opened: isM ? Date.now() : null,
-    realized: 0, tp1Hit: false, lastBar: startBar(Date.now()) + 60, prec: S.prec, name: s.name, auto, batch: S.batch, sigId: s.sigId
+    realized: 0, tp1Hit: false, lastBar: startBar(Date.now()) + 60, prec: S.prec, name: s.name, grade: s.grade, ok: s.ok, auto, batch: S.batch, sigId: s.sigId
   };
   S.accounts[accKey].positions.push(pos); saveAccounts();
   if (isM) chartEvent(pos, 'Entry', 'entry');
@@ -1305,6 +1338,13 @@ function wire() {
   $('#autoExpiry').oninput = e => { A.expiryBars = Math.max(3, Math.min(200, +e.target.value || 16)); saveSettings(); };
   $('#autoTake').onchange = e => { A.autoTake = e.target.value; saveSettings(); };
   $('#autoConf').oninput = e => { A.minConf = Math.max(1, Math.min(95, +e.target.value || 60)); saveSettings(); };
+  const P = S.settings.pro;
+  $('#proOn').checked = P.enabled; $('#proRR').value = P.minRR; $('#proDaily').value = P.dailyPct; $('#proStreak').value = P.streak;
+  const reGrade = () => { if (S.setups.length && S.analysis) { S.setups.forEach(s => s.grade = gradeOf(s, S.analysis)); renderResult(S.analysis); } };
+  $('#proOn').onchange = e => { P.enabled = e.target.checked; saveSettings(); reGrade(); };
+  $('#proRR').oninput = e => { P.minRR = Math.max(1, Math.min(5, +e.target.value || 1.8)); saveSettings(); reGrade(); };
+  $('#proDaily').oninput = e => { P.dailyPct = Math.max(0.5, Math.min(20, +e.target.value || 3)); saveSettings(); reGrade(); };
+  $('#proStreak').oninput = e => { P.streak = Math.max(1, Math.min(10, +e.target.value || 2)); saveSettings(); reGrade(); };
   $('#autoMax').oninput = e => { A.maxOpen = Math.max(1, Math.min(10, +e.target.value || 2)); saveSettings(); };
 
   $('#setups').onclick = e => {
@@ -1689,6 +1729,11 @@ function renderHistory(v, d, t) {
     </div>
     <div class="eq-wrap"><div class="eq-head">Equity curve <small>${(PERIODS.find(x => x[0] === S.histPeriod) || [])[1] || ''} · ${st.main}</small></div>${equitySVG(st.curve, st.main)}</div>
     ${symbols.length > 1 && S.histSymbol === 'all' && list.length ? `<div class="by-sym"><div class="eq-head">By symbol</div><table><tr><th>Symbol</th><th>Trades</th><th>Win %</th><th>Net pips</th><th>P/L</th></tr>${[...new Set(list.map(h => h.symbol))].map(sym => { const x = calcStats(list.filter(h => h.symbol === sym)); const pl = Object.entries(x.net).map(([c, v]) => `${v >= 0 ? '+' : ''}${money(v, c)}`).join(' · '); return `<tr><td>${esc(sym)}</td><td>${x.n}</td><td>${x.winRate == null ? '—' : x.winRate.toFixed(0) + '%'}</td><td class="${x.netPips >= 0 ? 'up' : 'down'}">${fmtPips(x.netPips)}</td><td class="${Object.values(x.net).reduce((a, b) => a + b, 0) >= 0 ? 'up' : 'down'}">${pl}</td></tr>`; }).join('')}</table></div>` : ''}`;
+  const gOk = list.filter(h => h.ok === true), gNo = list.filter(h => h.ok === false);
+  if (gOk.length || gNo.length) {
+    const row = (lbl, arr) => { const x = calcStats(arr); return `<tr><td>${lbl}</td><td>${x.n}</td><td class="${x.winRate >= 50 ? 'up' : 'down'}">${x.winRate == null ? '—' : x.winRate.toFixed(0) + '%'}</td><td class="${x.netPips >= 0 ? 'up' : 'down'}">${fmtPips(x.netPips)}</td><td>${Object.entries(x.net).map(([c, v2]) => `${v2 >= 0 ? '+' : ''}${money(v2, c)}`).join(' · ') || '—'}</td></tr>`; };
+    panel.insertAdjacentHTML('beforeend', `<div class="by-sym"><div class="eq-head">Pro filter result <small>did following the checklist pay?</small></div><table><tr><th>Setups</th><th>Trades</th><th>Win %</th><th>Net pips</th><th>P/L</th></tr>${gOk.length ? row('✓ TRADE (passed)', gOk) : ''}${gNo.length ? row('⏸ WATCH ONLY (taken anyway)', gNo) : ''}</table></div>`);
+  }
   if (!list.length) { t.innerHTML = `<tr><td style="color:var(--dim);padding:18px 8px">No closed ${ACC_LABEL[v].toLowerCase()} trades in this period.</td></tr>`; return; }
   t.innerHTML = '<tr><th>Closed</th><th>Symbol</th><th>Side</th><th>Entry</th><th>Exit</th><th>Size</th><th>Pips</th><th>Hold</th><th>Result</th><th>P/L</th></tr>' + list.slice(0, 300).map(h => {
     const pp = pipsClosed(h);
@@ -1714,6 +1759,95 @@ function wireHistory() {
     if (e.target.closest('#btnCsv')) exportCSV();
   });
   panel.addEventListener('change', e => { if (e.target.id === 'histSym') { S.histSymbol = e.target.value; renderAccounts(); } });
+}
+
+/* ================================================================
+   PRO FILTER — fewer, better trades
+   ================================================================ */
+S.calendar = []; S.calendarAt = 0;
+async function loadCalendar() {
+  if (Date.now() - S.calendarAt < 30 * 60 * 1000) return;
+  try { const d = await getJSON('/api/calendar'); S.calendar = d.events || []; S.calendarAt = Date.now(); } catch { }
+}
+function currenciesOf(market, symbol) {
+  const s = String(symbol).toUpperCase();
+  if (market === 'forex') {
+    if (/^XAU|^XAG|^GOLD|^SILVER|OIL|WTI|US30|NAS100|SPX500|US500|US100|DXY/.test(s)) return ['USD'];
+    if (/GER40/.test(s)) return ['EUR']; if (/UK100/.test(s)) return ['GBP']; if (/JP225/.test(s)) return ['JPY'];
+    if (/^[A-Z]{6}$/.test(s)) return [s.slice(0, 3), s.slice(3)];
+  }
+  if (market === 'crypto') return ['USD'];
+  if (market === 'stock') return /\.[A-Z]{1,3}$/.test(s) ? [] : ['USD'];
+  return [];
+}
+// high-impact events for this symbol from `before` minutes ago to `after` minutes ahead
+function newsNear(market, symbol, after = 45, before = 30) {
+  const cur = currenciesOf(market, symbol), now = Date.now();
+  return S.calendar.filter(e => cur.includes(e.cur) && /high/i.test(e.impact) && e.t >= now - before * 60000 && e.t <= now + after * 60000).sort((a, b) => a.t - b.t);
+}
+function setupKind(name) {
+  const n = String(name || '').toLowerCase();
+  return /break/.test(n) ? 'breakout' : /fib|golden/.test(n) ? 'fib' : /pullback|retest|ema/.test(n) ? 'pullback' : /revers|counter|fade|range/.test(n) ? 'reversal' : /trend|continu|market/.test(n) ? 'trend' : 'other';
+}
+// make stops survive normal noise and put TP1 where it gets hit often
+function proAdjust(s) {
+  const P = S.settings.pro; if (!P.enabled || !S.ind) return;
+  const a = S.ind.atr, sg = s.direction === 'long' ? 1 : -1;
+  const minSL = P.minSlAtr * a;
+  if (Math.abs(s.entry - s.stopLoss) < minSL) { s.stopLoss = s.entry - sg * minSL; s.adjusted = true; }
+  const R = Math.abs(s.entry - s.stopLoss);
+  const d1 = Math.abs(s.tp1 - s.entry);
+  if (d1 > R * 1.05 || d1 < R * 0.8) { s.tp1 = s.entry + sg * R; s.adjusted = true; }
+  if ((s.tp2 - s.tp1) * sg <= 0) s.tp2 = s.entry + sg * R * 2;
+  if ((s.tp3 - s.tp2) * sg <= 0) s.tp3 = s.entry + sg * R * 3;
+  if (s.adjusted && !/Pro filter/.test(s.reasoning)) s.reasoning = (s.reasoning ? s.reasoning + ' ' : '') + '(Pro filter: stop widened beyond the noise / TP1 set to 1R.)';
+}
+function lossStreak(symbol) {
+  const list = S.sigStats.filter(x => x.symbol === symbol).sort((a, b) => b.t - a.t);
+  let n = 0; for (const x of list) { if (x.win) break; n++; }
+  return { n, last: list[0]?.t || 0 };
+}
+// pauses: loss streak on a symbol, or the daily loss limit of the active account
+function riskGuard(symbol = S.symbol.toUpperCase()) {
+  const P = S.settings.pro; if (!P.enabled) return { block: false };
+  const ls = lossStreak(symbol);
+  if (ls.n >= P.streak && Date.now() - ls.last < P.pauseHours * 3600e3) {
+    const until = ls.last + P.pauseHours * 3600e3;
+    return { block: true, until, why: `${ls.n} losses in a row on ${symbol} — cooling down until ${new Date(until).toLocaleTimeString('en-GB', { timeZone: 'Asia/Colombo', hour: '2-digit', minute: '2-digit' })}` };
+  }
+  const acc = ACC(), cur = curOf(S.market);
+  const day = new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Colombo' });
+  const todayPnl = acc.history.filter(h => h.cur === cur && new Date(h.closed).toLocaleDateString('en-CA', { timeZone: 'Asia/Colombo' }) === day).reduce((a, h) => a + h.pnl, 0);
+  const startBal = acc[cur] - todayPnl;
+  if (startBal > 0 && todayPnl < 0 && -todayPnl >= startBal * P.dailyPct / 100) {
+    return { block: true, why: `daily loss limit reached (${money(todayPnl, cur)} today, limit ${P.dailyPct}%). Stop for today — tomorrow is a new day.` };
+  }
+  return { block: false, todayPnl };
+}
+function proChecks(s, A) {
+  const P = S.settings.pro, I = S.ind || {}, d = s.direction, long = d === 'long';
+  const R = Math.abs(s.entry - s.stopLoss), rr = Math.abs(s.tp2 - s.entry) / (R || 1e-9);
+  const htf = A.htf?.bias;
+  const news = newsNear(S.market, S.symbol, P.newsMins, P.newsMins);
+  const guard = riskGuard();
+  const kind = setupKind(s.name), kst = S.sigStats.filter(x => x.symbol === S.symbol.toUpperCase() && setupKind(x.name) === kind);
+  const kWin = kst.length ? kst.filter(x => x.win).length / kst.length : 1;
+  const utcH = new Date().getUTCHours() + new Date().getUTCMinutes() / 60, wd = new Date().getUTCDay();
+  const fxClosed = S.market === 'forex' && (wd === 6 || (wd === 0 && utcH < 22) || (wd === 5 && utcH >= 21));
+  const rollover = S.market === 'forex' && utcH >= 20.9 && utcH < 22.5;
+  const checks = [
+    { label: htf ? `HTF ${htf}` : 'HTF trend', ok: !htf || (long ? htf === 'bullish' : htf === 'bearish') || (htf === 'neutral' && /limit|range|revers/i.test(s.name + s.type)), hard: htf && htf !== 'neutral', tip: 'Trade in the direction of the higher timeframe' },
+    { label: 'EMA trend', ok: !(I.ema50 && I.ema200) || (long ? I.ema50 >= I.ema200 || I.price > I.ema200 : I.ema50 <= I.ema200 || I.price < I.ema200), tip: 'Price / EMA50 on the right side of EMA200' },
+    { label: I.adx ? `ADX ${I.adx.adx.toFixed(0)}` : 'Trend strength', ok: !I.adx || I.adx.adx >= P.minAdx || /limit/i.test(orderTypeOf(s, I.price, I.atr)), tip: `Choppy markets (ADX < ${P.minAdx}) stop out breakouts and market entries` },
+    { label: `R:R ${rr.toFixed(1)}`, ok: rr >= P.minRR, hard: rr < 1.2, tip: `Reward to TP2 at least ${P.minRR}× the risk` },
+    { label: `SL ${(R / (I.atr || 1)).toFixed(1)} ATR`, ok: R >= P.minSlAtr * (I.atr || 0) * 0.98, hard: R < 0.8 * (I.atr || 0), tip: 'Stop outside normal noise' },
+    { label: I.rsi != null ? `RSI ${I.rsi.toFixed(0)}` : 'RSI', ok: I.rsi == null || (long ? I.rsi < 72 : I.rsi > 28), tip: 'Do not buy overbought / sell oversold' },
+    { label: news.length ? `News: ${news[0].cur} ${news[0].title}` : 'No big news', ok: !news.length, hard: !!news.length, tip: `No high-impact news ±${P.newsMins} min` },
+    { label: fxClosed ? 'Market closed' : rollover ? 'Rollover hour' : 'Good session', ok: !fxClosed && !rollover, hard: fxClosed, tip: 'Avoid the daily rollover (wide spreads) and closed markets' },
+    { label: guard.block ? 'Paused' : 'No loss streak', ok: !guard.block, hard: guard.block, tip: guard.why || 'Pauses after a loss streak or the daily loss limit' },
+    { label: kst.length >= 4 ? `${kind} ${Math.round(kWin * 100)}% here` : `${kind} setup`, ok: kst.length < 4 || kWin >= 0.35, tip: 'This kind of setup has worked on this symbol before' }
+  ];
+  return checks;
 }
 
 /* ---------------- boot ---------------- */
