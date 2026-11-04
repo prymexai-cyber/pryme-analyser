@@ -1,5 +1,5 @@
 /* ============================================================
-   PRYME ANALYSER — backend
+   PRYME QUANT — backend
    - Market data proxy: Crypto (Binance), Forex/Gold/Indices/Intl stocks (Yahoo),
      Sri Lanka CSE (cse.lk public JSON API)
    - Daily news (Google News RSS)
@@ -11,6 +11,16 @@ const path = require('path');
 
 const app = express();
 app.use(express.json({ limit: '2mb' }));
+// service worker must never be cached by the browser, so app updates arrive straight away
+app.get('/sw.js', (_, res) => { res.set('Cache-Control', 'no-cache'); res.sendFile(path.join(__dirname, 'public', 'sw.js')); });
+// Android app (PWABuilder / Trusted Web Activity): proves the app and this site belong together → full screen, no browser bar.
+// Paste the JSON PWABuilder gives you into the ASSETLINKS_JSON env var on Render (or save it as assetlinks.json next to server.js).
+app.get('/.well-known/assetlinks.json', (_, res) => {
+  try {
+    const txt = process.env.ASSETLINKS_JSON || require('fs').readFileSync(path.join(__dirname, 'assetlinks.json'), 'utf8');
+    res.type('application/json').send(txt);
+  } catch { res.status(404).json([]); }
+});
 app.use(express.static(path.join(__dirname, 'public')));
 // TradingView Advanced Charts library (optional) lives in public/charting_library — if it's not there, answer 404 (not index.html)
 app.use('/charting_library', (_, res) => res.status(404).end());
@@ -540,7 +550,7 @@ async function callAI({ provider, key, model, system, prompt }) {
       return { text: j?.candidates?.[0]?.content?.parts?.map(x => x.text).join('') || '', model: m };
     }
     const headers = { 'Content-Type': 'application/json', Authorization: `Bearer ${key}` };
-    if (provider === 'openrouter') { headers['HTTP-Referer'] = 'https://pryme-analyser.onrender.com'; headers['X-Title'] = 'Pryme Analyser'; }
+    if (provider === 'openrouter') { headers['HTTP-Referer'] = 'https://pryme-analyser.onrender.com'; headers['X-Title'] = 'Pryme Quant'; }
     const body = { model: m, temperature: 0.25, max_tokens: 4096, messages: [{ role: 'system', content: system }, { role: 'user', content: prompt }] };
     if (provider !== 'openrouter') body.response_format = { type: 'json_object' };
     const r = await fetch(p.url, { method: 'POST', headers, body: JSON.stringify(body), signal: ctrl.signal });
@@ -570,4 +580,4 @@ app.post('/api/ai', async (req, res) => {
 app.get('*', (_, res) => res.sendFile(path.join(__dirname, 'public', 'index.html')));
 
 const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => console.log(`Pryme Analyser running on http://localhost:${PORT}`));
+app.listen(PORT, () => console.log(`Pryme Quant running on http://localhost:${PORT}`));
