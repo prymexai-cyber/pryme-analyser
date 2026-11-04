@@ -3,13 +3,19 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-<title>Pryme Analyser</title>
+<title>Pryme Quant</title>
 <meta name="theme-color" content="#07090d">
 <meta name="description" content="AI chart analyser for Forex, Crypto, CSE and global stocks — entry, stop loss and take profit levels with a demo wallet.">
 <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'><rect width='64' height='64' rx='14' fill='%2307090d'/><path d='M14 44 L26 30 L34 38 L50 18' stroke='%23c6ff3d' stroke-width='6' fill='none' stroke-linecap='round' stroke-linejoin='round'/></svg>">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet">
+<link rel="manifest" href="/manifest.json">
+<link rel="apple-touch-icon" href="/icons/apple-touch-icon.png">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Pryme Quant">
 <link rel="stylesheet" href="style.css">
 <script src="https://unpkg.com/lightweight-charts@4.2.0/dist/lightweight-charts.standalone.production.js"></script>
 </head>
@@ -19,7 +25,7 @@
   <div class="brand">
     <svg viewBox="0 0 64 64" class="logo"><path d="M10 46 L24 30 L33 39 L54 16" stroke="currentColor" stroke-width="6" fill="none" stroke-linecap="round" stroke-linejoin="round"/><circle cx="54" cy="16" r="5" fill="currentColor"/></svg>
     <div>
-      <div class="brand-name">PRYME<span>ANALYSER</span></div>
+      <div class="brand-name">PRYME<span>QUANT</span></div>
       <div class="brand-sub">AI chart intelligence</div>
     </div>
   </div>
@@ -46,7 +52,7 @@
 </header>
 <button class="sync-banner hidden" id="syncBanner">Your data changed on another device — tap to load the latest</button>
 
-<section class="controls">
+<section class="controls" data-tabs="home live">
   <div class="seg" id="marketSeg">
     <button data-m="forex">Forex</button>
     <button data-m="crypto">Crypto</button>
@@ -68,26 +74,23 @@
 <main class="layout">
   <div class="main-col">
   <!-- CHART -->
-  <section class="card chart-card">
+  <section class="card chart-card" data-tabs="home live">
     <div class="chart-head">
       <div>
         <div class="sym-title" id="symTitle">—</div>
         <div class="sym-sub" id="symSub">Loading…</div>
-        <div class="chart-legend"><span class="l e20">EMA 20</span><span class="l e50">EMA 50</span><span class="l e200">EMA 200</span><a id="tvLink" class="tv-link" target="_blank" rel="noopener">Open in TradingView ↗</a></div>
+        <div class="chart-legend"><span class="tv-badge" id="tvBadge">● LIVE · TradingView chart</span><a id="tvLink" class="tv-link" target="_blank" rel="noopener">Open on TradingView ↗</a></div>
       </div>
       <div class="price-box">
         <div class="price" id="lastPrice">—</div>
         <div class="chg" id="lastChg">—</div>
       </div>
     </div>
-    <div class="chart-tabs">
-      <button class="on" data-view="tv">TradingView live</button>
-      <button data-view="pryme">Positions chart</button>
-    </div>
     <div class="chart-area">
-      <div id="tvWrap"></div>
+      <div id="tvWrap" class="hidden"></div>
       <div id="chart" class="hidden"></div>
       <div id="posLayer" class="pos-layer hidden"></div>
+      <div class="tv-legend" id="tvLegend"></div>
       <div class="lvl-box hidden" id="lvlBox"></div>
       <div class="chart-msg hidden" id="chartMsg"></div>
     </div>
@@ -95,7 +98,7 @@
   </section>
 
   <!-- ACCOUNTS -->
-<section class="card demo-card" id="acctSection">
+<section class="card demo-card" id="acctSection" data-tabs="trades live">
   <div class="demo-head">
     <div class="seg small" id="acctViewSeg">
       <button data-v="demo">Demo account</button>
@@ -125,7 +128,18 @@
 
   <!-- SIDE -->
   <aside class="side">
-    <section class="card acct-card">
+    <section class="card me-card" data-tabs="account">
+      <div class="me-head"><span id="meAvatar"></span><div><b id="meName">Trader</b><small id="meEmail"></small></div></div>
+      <div class="me-list">
+        <button data-me="profile">✎ Edit profile</button>
+        <button data-me="keys">🔑 AI keys & settings</button>
+        <button data-me="install" id="meInstall" class="hidden">📲 Install Pryme Quant app</button>
+        <button data-me="help">❓ How to use</button>
+        <button data-me="signin" id="meSignIn">Sign in with Google</button>
+        <button data-me="signout" id="meSignOut" class="danger hidden">Sign out</button>
+      </div>
+    </section>
+    <section class="card acct-card" data-tabs="home account">
       <h3>Account</h3>
       <div class="seg acct-seg" id="acctSeg">
         <button data-acc="demo">Demo</button>
@@ -145,6 +159,7 @@
         <span class="btn-label">Analyse with AI</span>
         <span class="spinner"></span>
       </button>
+      <button class="ghost wide" id="btnBacktest">📊 Backtest this chart</button>
       <div class="ai-status" id="aiStatus"></div>
       <label class="check auto-main"><input type="checkbox" id="autoOn"> <span><b>Auto next setup</b> — when a signal's TP hits on the live chart, analyse again with the updated balance</span></label>
       <details class="auto-more">
@@ -172,6 +187,12 @@
           <label>Max open<input type="number" id="autoMax" min="1" max="10" step="1"></label>
         </div>
         <div class="pro-box">
+          <label class="mode-l">Mode
+            <select id="proMode">
+              <option value="highwin">High win-rate — strict, fewer trades, TP1 at 0.7R</option>
+              <option value="balanced">Balanced — more trades, TP1 at 1R</option>
+            </select>
+          </label>
           <label class="check"><input type="checkbox" id="proOn"> <span><b>Pro filter</b> — only setups that pass the checklist are marked TRADE (HTF trend, not choppy, R:R, safe stop, no big news, no loss streak)</span></label>
           <div class="field-row three">
             <label>Min R:R<input type="number" id="proRR" min="1" max="5" step="0.1"></label>
@@ -183,7 +204,7 @@
       </details>
     </section>
 
-    <section class="card result-card" id="resultCard">
+    <section class="card result-card" id="resultCard" data-tabs="home signals">
       <div class="empty" id="resultEmpty">
         <div class="empty-mark">◎</div>
         <p>Pick a market and symbol, set your balance, then hit <b>Analyse with AI</b>. You'll get 3–4 entries with SL and TP drawn on the chart.</p>
@@ -204,22 +225,22 @@
       </div>
     </section>
 
-    <section class="card sig-card">
+    <section class="card sig-card" data-tabs="signals">
       <h3>Live signals <span class="rec" id="sigRecord">—</span></h3>
       <ul class="sig-list" id="sigList"></ul>
       <h3 class="sub-h">Auto log</h3>
       <ul class="autolog" id="autoLog"></ul>
     </section>
 
-    <section class="card news-card">
+    <section class="card news-card" data-tabs="signals">
       <h3>Today's news <small id="newsQ"></small></h3>
       <ul id="newsList" class="news"></ul>
     </section>
   </aside>
 </main>
 
-<footer class="foot">
-  <p>Pryme Analyser gives AI-generated analysis for education and practice. No analysis can guarantee profit — markets carry real risk of loss. Test on the demo wallet first and never risk money you can't afford to lose.</p>
+<footer class="foot" data-tabs="account">
+  <p>Pryme Quant gives AI-generated analysis for education and practice. No analysis can guarantee profit — markets carry real risk of loss. Test on the demo wallet first and never risk money you can't afford to lose.</p>
 </footer>
 
 <!-- SETTINGS MODAL -->
@@ -295,11 +316,47 @@
   </div>
 </div>
 
+<!-- MOBILE BOTTOM NAV -->
+<nav class="bottom-nav" id="bottomNav" aria-label="Main">
+  <button data-tab="home" class="on"><svg viewBox="0 0 24 24"><path d="M3 10.5 12 3l9 7.5V20a1 1 0 0 1-1 1h-5v-6H9v6H4a1 1 0 0 1-1-1z"/></svg><span>Home</span></button>
+  <button data-tab="signals"><svg viewBox="0 0 24 24"><path d="M4 20V10M10 20V4M16 20v-8M22 20H2"/></svg><span>Signals</span></button>
+  <button data-tab="live"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="2.5"/><path d="M7.8 7.8a6 6 0 0 0 0 8.4M16.2 7.8a6 6 0 0 1 0 8.4M4.9 4.9a10 10 0 0 0 0 14.2M19.1 4.9a10 10 0 0 1 0 14.2"/></svg><span>Live</span><i class="nav-dot hidden" id="navLiveDot"></i></button>
+  <button data-tab="trades"><svg viewBox="0 0 24 24"><path d="M4 4h16v16H4zM4 9h16M9 9v11"/></svg><span>Trades</span></button>
+  <button data-tab="account"><svg viewBox="0 0 24 24"><circle cx="12" cy="8" r="4"/><path d="M4 21a8 8 0 0 1 16 0"/></svg><span>Account</span></button>
+</nav>
+
+<!-- INSTALL HELP (iPhone / no prompt) -->
+<div class="modal hidden" id="installModal">
+  <div class="modal-box small">
+    <div class="modal-head">
+      <h3>Install Pryme Quant</h3>
+      <button class="icon-btn" data-close aria-label="Close"><svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18"/></svg></button>
+    </div>
+    <ol class="steps">
+      <li><b>Android</b><span>Open this site → menu ⋮ → <i>Install app</i> (or <i>Add to Home screen</i>).</span></li>
+      <li><b>iPhone</b><span>Open in Safari → Share ⬆ → <i>Add to Home Screen</i>.</span></li>
+      <li><b>Then</b><span>Open Pryme Quant from your home screen — it runs full screen like a normal app, without the browser bar.</span></li>
+    </ol>
+    <div class="modal-foot"><button class="primary" data-close>Got it</button></div>
+  </div>
+</div>
+
+<!-- BACKTEST -->
+<div class="modal hidden" id="btModal">
+  <div class="modal-box">
+    <div class="modal-head">
+      <h3>Backtest</h3>
+      <button class="icon-btn" data-close aria-label="Close"><svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18"/></svg></button>
+    </div>
+    <div id="btBody"></div>
+  </div>
+</div>
+
 <!-- LOGIN GATE -->
 <div class="gate hidden" id="gate">
   <div class="gate-box">
     <svg viewBox="0 0 64 64" class="logo big"><path d="M10 46 L24 30 L33 39 L54 16" stroke="currentColor" stroke-width="6" fill="none" stroke-linecap="round" stroke-linejoin="round"/><circle cx="54" cy="16" r="5" fill="currentColor"/></svg>
-    <h1>PRYME <span>ANALYSER</span></h1>
+    <h1>PRYME <span>QUANT</span></h1>
     <p class="gate-sub">AI chart analysis for Forex, Crypto, CSE 🇱🇰 and Stocks</p>
     <div id="gateLoading" class="gate-loading"><span class="spin"></span></div>
     <div id="gateLogin" class="hidden">
@@ -337,7 +394,7 @@
 <div class="modal hidden" id="welcomeModal">
   <div class="modal-box">
     <div class="modal-head">
-      <h3>Welcome to Pryme 👋</h3>
+      <h3>Welcome to Pryme Quant 👋</h3>
       <button class="icon-btn" data-close aria-label="Close"><svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18"/></svg></button>
     </div>
     <ol class="steps">
@@ -384,5 +441,6 @@
 <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore-compat.js"></script>
 <script src="app.js"></script>
 <script src="cloud.js"></script>
+<script src="mobile.js"></script>
 </body>
 </html>
