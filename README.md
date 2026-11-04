@@ -1,4 +1,4 @@
-# Pryme Analyser
+# Pryme Quant
 
 AI chart analyser for **Forex, Crypto, Sri Lanka CSE and international stocks** — dark theme, live chart, 3–4 entries per timeframe with **Entry / SL / TP1 / TP2 / TP3** drawn on the chart, position size from your wallet balance, today's news, and a **demo account** to test the trades.
 
