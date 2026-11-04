@@ -90,10 +90,26 @@
         <div class="chg" id="lastChg">—</div>
       </div>
     </div>
+    <div class="chart-tools" id="chartTools">
+      <button data-tool="cursor" class="on" title="Cursor"><svg viewBox="0 0 24 24"><path d="M5 3l14 8-6 2-3 6z"/></svg></button>
+      <button data-tool="trend" title="Trend line"><svg viewBox="0 0 24 24"><path d="M4 20 20 4"/><circle cx="4" cy="20" r="1.6"/><circle cx="20" cy="4" r="1.6"/></svg></button>
+      <button data-tool="hline" title="Horizontal line"><svg viewBox="0 0 24 24"><path d="M2 12h20"/></svg></button>
+      <button data-tool="ray" title="Horizontal ray"><svg viewBox="0 0 24 24"><circle cx="5" cy="12" r="1.8"/><path d="M5 12h17"/></svg></button>
+      <button data-tool="rect" title="Rectangle / zone"><svg viewBox="0 0 24 24"><rect x="4" y="6" width="16" height="12" rx="1"/></svg></button>
+      <button data-tool="fib" title="Fibonacci retracement"><svg viewBox="0 0 24 24"><path d="M3 5h18M3 10h18M3 14h18M3 19h18"/></svg></button>
+      <button data-tool="text" title="Text note"><svg viewBox="0 0 24 24"><path d="M5 6V4h14v2M12 4v16M9 20h6"/></svg></button>
+      <button data-tool="erase" title="Eraser — tap a drawing to delete it"><svg viewBox="0 0 24 24"><path d="M16 3l5 5-11 11H5v-5z"/><path d="M5 19h14"/></svg></button>
+      <button data-act="clear" title="Delete all drawings on this symbol"><svg viewBox="0 0 24 24"><path d="M4 7h16M9 7V4h6v3M6 7l1 13h10l1-13"/></svg></button>
+      <span class="ct-sep"></span>
+      <button data-act="ind" class="ct-fx" title="Indicators">ƒx <span>Indicators</span></button>
+      <span class="ct-grow"></span>
+      <button data-act="theme" id="themeBtn" title="Light / dark chart"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/></svg></button>
+    </div>
     <div class="chart-area">
       <div id="tvWrap" class="hidden"></div>
       <div id="chart" class="hidden"></div>
       <div id="posLayer" class="pos-layer hidden"></div>
+      <svg id="drawLayer" class="draw-layer"></svg>
       <div class="tv-legend" id="tvLegend"></div>
       <div class="lvl-box hidden" id="lvlBox"></div>
       <div class="chart-msg hidden" id="chartMsg"></div>
@@ -102,7 +118,7 @@
   </section>
 
   <!-- ACCOUNTS -->
-<section class="card demo-card" id="acctSection" data-tabs="trades live">
+<section class="card demo-card" id="acctSection" data-tabs="account">
   <div class="demo-head">
     <div class="seg small" id="acctViewSeg">
       <button data-v="demo">Demo account</button>
@@ -132,7 +148,7 @@
 
   <!-- SIDE -->
   <aside class="side">
-    <section class="card me-card" data-tabs="account">
+    <section class="card me-card" data-tabs="user">
       <div class="me-head"><span id="meAvatar"></span><div><b id="meName">Trader</b><small id="meEmail"></small></div></div>
       <div class="me-list">
         <button data-me="profile">✎ Edit profile</button>
@@ -143,6 +159,42 @@
         <button data-me="signout" id="meSignOut" class="danger hidden">Sign out</button>
       </div>
     </section>
+    <section class="card trade-panel" id="tradePanel" data-tabs="live">
+      <div class="tp-acct">
+        <div><span class="tp-badge" id="tpAccLabel">PRACTICE ACCOUNT</span><b id="tpBal">$0.00</b></div>
+        <button class="ghost tp-switch" id="tpAccSwitch">Switch to Real</button>
+      </div>
+      <div class="tp-sym" id="tpSym">—</div>
+      <div class="tp-row">
+        <button class="tp-sell" id="tpSell"><small>SELL</small><b id="tpBid">—</b></button>
+        <div class="tp-lot">
+          <div class="tp-lot-ctl"><button id="tpMinus" aria-label="Smaller size">−</button><input id="tpLot" inputmode="decimal" aria-label="Lot size"><button id="tpPlus" aria-label="Bigger size">+</button></div>
+          <small id="tpLotUnit">lot</small>
+        </div>
+        <button class="tp-buy" id="tpBuy"><small>BUY</small><b id="tpAsk">—</b></button>
+      </div>
+      <div class="tp-info" id="tpInfo"></div>
+      <details class="tp-sltp" id="tpSltp">
+        <summary>Stop loss / Take profit <small>(optional, in pips)</small></summary>
+        <div class="field-row">
+          <label>Stop loss pips<input id="tpSL" type="number" min="0" step="any" placeholder="none"></label>
+          <label>Take profit pips<input id="tpTP" type="number" min="0" step="any" placeholder="none"></label>
+        </div>
+        <button class="ghost wide" id="tpUseAi">Use levels from AI setup</button>
+      </details>
+      <div class="tp-pl">
+        <div><small>Open P/L</small><b id="tpOpenPL">$0.00</b></div>
+        <div><small>Equity</small><b id="tpEquity">$0.00</b></div>
+        <div><small>Margin used</small><b id="tpMargin">$0.00</b></div>
+      </div>
+      <div class="tabs2 tp-tabs" id="tpTabs">
+        <button class="on" data-tpt="pos">Positions <span class="cnt" id="tpPosN">0</span></button>
+        <button data-tpt="ord">Orders <span class="cnt" id="tpOrdN">0</span></button>
+      </div>
+      <div class="tp-list" id="tpList"></div>
+      <p class="fine" id="tpNote"></p>
+    </section>
+
     <section class="card acct-card" data-tabs="home account">
       <h3>Account</h3>
       <div class="seg acct-seg" id="acctSeg">
@@ -229,6 +281,11 @@
       </div>
     </section>
 
+    <section class="card deep-card" id="deepCard" data-tabs="signals">
+      <h3>Full market analysis <small id="deepSub">run "Analyse with AI" to fill this</small></h3>
+      <div id="deepBody" class="deep-body"><p class="fine">Pryme checks the chart with 29 analysis methods — technical, price action, structure, SMC/ICT, liquidity, volume, Wyckoff, Elliott, statistics, volatility, sentiment, intermarket, news and risk — and only trades when most of them agree.</p></div>
+    </section>
+
     <section class="card sig-card" data-tabs="signals">
       <h3>Live signals <span class="rec" id="sigRecord">—</span></h3>
       <ul class="sig-list" id="sigList"></ul>
@@ -243,7 +300,7 @@
   </aside>
 </main>
 
-<footer class="foot" data-tabs="account">
+<footer class="foot" data-tabs="user">
   <p>Pryme Quant gives AI-generated analysis for education and practice. No analysis can guarantee profit — markets carry real risk of loss. Test on the demo wallet first and never risk money you can't afford to lose.</p>
 </footer>
 
@@ -320,14 +377,28 @@
   </div>
 </div>
 
-<!-- MOBILE BOTTOM NAV -->
-<nav class="bottom-nav" id="bottomNav" aria-label="Main">
+<!-- APP NAVIGATION (left sidebar on desktop, bottom bar on phones) -->
+<nav class="bottom-nav app-nav" id="bottomNav" aria-label="Main">
+  <div class="nav-brand">
+    <svg viewBox="0 0 64 64" class="logo"><path d="M10 46 L24 30 L33 39 L54 16" stroke="currentColor" stroke-width="6" fill="none" stroke-linecap="round" stroke-linejoin="round"/><circle cx="54" cy="16" r="5" fill="currentColor"/></svg>
+    <div class="brand-name">PRYME<span>QUANT</span></div>
+  </div>
   <button data-tab="home" class="on"><svg viewBox="0 0 24 24"><path d="M3 10.5 12 3l9 7.5V20a1 1 0 0 1-1 1h-5v-6H9v6H4a1 1 0 0 1-1-1z"/></svg><span>Home</span></button>
-  <button data-tab="signals"><svg viewBox="0 0 24 24"><path d="M4 20V10M10 20V4M16 20v-8M22 20H2"/></svg><span>Signals</span></button>
-  <button data-tab="live"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="2.5"/><path d="M7.8 7.8a6 6 0 0 0 0 8.4M16.2 7.8a6 6 0 0 1 0 8.4M4.9 4.9a10 10 0 0 0 0 14.2M19.1 4.9a10 10 0 0 1 0 14.2"/></svg><span>Live</span><i class="nav-dot hidden" id="navLiveDot"></i></button>
-  <button data-tab="trades"><svg viewBox="0 0 24 24"><path d="M4 4h16v16H4zM4 9h16M9 9v11"/></svg><span>Trades</span></button>
-  <button data-tab="account"><svg viewBox="0 0 24 24"><circle cx="12" cy="8" r="4"/><path d="M4 21a8 8 0 0 1 16 0"/></svg><span>Account</span></button>
+  <button data-tab="signals"><svg viewBox="0 0 24 24"><path d="M12 3l1.8 4.2L18 9l-4.2 1.8L12 15l-1.8-4.2L6 9l4.2-1.8z"/><path d="M19 15l.8 1.7 1.7.8-1.7.8L19 20l-.8-1.7-1.7-.8 1.7-.8z"/></svg><span>AI Signals</span></button>
+  <button data-tab="live"><svg viewBox="0 0 24 24"><path d="M3 3v18h18"/><path d="M7 15l4-5 3 3 5-7"/></svg><span>Live Charts</span><i class="nav-dot hidden" id="navLiveDot"></i></button>
+  <button data-tab="account"><svg viewBox="0 0 24 24"><rect x="3" y="6" width="18" height="14" rx="2"/><path d="M16 13h2M3 10h18M7 6V4h10v2"/></svg><span>Account</span></button>
+  <button data-tab="user"><svg viewBox="0 0 24 24"><circle cx="12" cy="8" r="4"/><path d="M4 21a8 8 0 0 1 16 0"/></svg><span>User</span></button>
+  <div class="nav-foot"><small>AI analysis for practice & education. Trading carries risk.</small></div>
 </nav>
+
+<!-- INDICATORS -->
+<div class="modal hidden" id="indModal">
+  <div class="modal-box small ind-box">
+    <div class="modal-head"><h3>Indicators</h3><button class="icon-btn" data-close aria-label="Close"><svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18"/></svg></button></div>
+    <div id="indList" class="ind-list"></div>
+    <div class="modal-foot"><button class="primary" data-close>Done</button></div>
+  </div>
+</div>
 
 <!-- INSTALL HELP (iPhone / no prompt) -->
 <div class="modal hidden" id="installModal">
@@ -444,6 +515,9 @@
 <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-auth-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore-compat.js"></script>
 <script src="app.js"></script>
+<script src="deep.js"></script>
+<script src="chart-tools.js"></script>
+<script src="trade-panel.js"></script>
 <script src="cloud.js"></script>
 <script src="mobile.js"></script>
 </body>
