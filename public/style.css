@@ -479,3 +479,5 @@ td.acts{display:flex;gap:4px;justify-content:flex-end}
 .pbox.loss{background:rgba(242,54,69,.2);box-shadow:none}
 .lvl-box{top:auto;bottom:40px}
 @media (max-width:760px){.tv-legend{font-size:11px}.tv-legend .tvl-2 span{display:none}.lvl-box{top:auto;bottom:34px}}
+.pbox.zone{background:rgba(41,98,255,.14);box-shadow:inset 0 0 0 1px rgba(41,98,255,.55)}
+.zone-tag{position:absolute;font:600 9.5px var(--mono);color:#82a6ff;letter-spacing:.06em}
