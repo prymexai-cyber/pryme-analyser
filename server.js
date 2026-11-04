@@ -51,11 +51,35 @@ async function fetchJSON(url, opts = {}, timeoutMs = 15000) {
 }
 
 /* ---------- helpers ---------- */
-function aggregate(candles, sec) {
+/* Time-zone helpers so candles open at the same moment as on TradingView:
+   forex 17:00 New York, gold/oil/futures 18:00 New York, stocks at the exchange open (e.g. 9:30 NY). */
+const tzFmt = {}, tzOffCache = new Map();
+function tzOffset(t, tz) { // seconds east of UTC for this zone at unix time t (handles daylight saving)
+  const k = tz + '|' + Math.floor(t / 1800);
+  if (tzOffCache.has(k)) return tzOffCache.get(k);
+  const f = tzFmt[tz] || (tzFmt[tz] = new Intl.DateTimeFormat('en-US', { timeZone: tz, hourCycle: 'h23', year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' }));
+  const p = Object.fromEntries(f.formatToParts(new Date(t * 1000)).map(x => [x.type, x.value]));
+  const off = Math.round((Date.UTC(+p.year, +p.month - 1, +p.day, +p.hour % 24, +p.minute) / 1000 - t) / 60) * 60;
+  if (tzOffCache.size > 20000) tzOffCache.clear();
+  tzOffCache.set(k, off); return off;
+}
+function sessionStart(t, a) { // most recent session open (a = {tz, h, m}) at or before t
+  const off = tzOffset(t, a.tz), local = t + off;
+  let s = Math.floor(local / 86400) * 86400 + a.h * 3600 + (a.m || 0) * 60;
+  if (s > local) s -= 86400;
+  return s - off;
+}
+function bucketOf(t, sec, a) {
+  if (!a) return Math.floor(t / sec) * sec;
+  const ss = sessionStart(t, a);
+  if (sec >= 86400) return a.h >= 12 ? Math.floor((ss + 86400) / 86400) * 86400 : Math.floor((ss + tzOffset(ss, a.tz)) / 86400) * 86400; // daily bar labelled with its trading date
+  return ss + Math.floor((t - ss) / sec) * sec;
+}
+function aggregate(candles, sec, anchor) {
   const out = [];
   let cur = null;
   for (const c of candles) {
-    const b = Math.floor(c.time / sec) * sec;
+    const b = bucketOf(c.time, sec, anchor);
     if (!cur || cur.time !== b) {
       if (cur) out.push(cur);
       cur = { time: b, open: c.open, high: c.high, low: c.low, close: c.close, volume: c.volume || 0 };
@@ -172,7 +196,7 @@ const TV_INDEX = { '^NDX': 'NASDAQ:NDX', '^DJI': 'DJ:DJI', '^GSPC': 'SP:SPX', '^
 const TV_SUFFIX = { NS: 'NSE', BO: 'BSE', L: 'LSE', TO: 'TSX', V: 'TSXV', AX: 'ASX', HK: 'HKEX', T: 'TSE', DE: 'XETR', F: 'FWB', PA: 'EURONEXT', AS: 'EURONEXT', BR: 'EURONEXT', MI: 'MIL', MC: 'BME', SW: 'SIX', ST: 'OMXSTO', CO: 'OMXCOP', OL: 'OSL', KS: 'KRX', KQ: 'KRX', SS: 'SSE', SZ: 'SZSE', SI: 'SGX', JK: 'IDX', KL: 'MYX', BK: 'SET', SA: 'BMFBOVESPA', MX: 'BMV', JO: 'JSE', TW: 'TWSE', NZ: 'NZX', IS: 'BIST', TA: 'TASE', SR: 'TADAWUL', QA: 'QSE', AE: 'DFM' };
 function tvForYahoo(ys) {
   if (TV_INDEX[ys]) return TV_INDEX[ys];
-  if (ys.endsWith('=X')) return 'FX_IDC:' + ys.replace('=X', '');
+  if (ys.endsWith('=X')) { const p = ys.replace('=X', ''); return (FX_OANDA.has(p.slice(0, 3)) && FX_OANDA.has(p.slice(3)) ? 'OANDA:' : 'FX_IDC:') + p; }
   const m = /^(.+)\.([A-Z]{1,3})$/.exec(ys);
   if (m && TV_SUFFIX[m[2]]) return TV_SUFFIX[m[2]] + ':' + m[1].replace(/-/g, '_');
   return ys.replace(/-/g, '.');
@@ -197,53 +221,129 @@ function wantGoldTicks() {
 function goldTickCandles() {
   return aggregate(goldTicks.map(x => ({ time: x.t, open: x.p, high: x.p, low: x.p, close: x.p, volume: 0 })), 60);
 }
-async function goldSpotCandles(tf, limit) {
-  wantGoldTicks();
-  const k = await cryptoCandles('PAXGUSDT', tf, limit);
-  if (!k.candles.length) throw new Error('no PAXG data');
-  const last = k.candles[k.candles.length - 1].close;
-  let spot = null;
-  const lt = goldTicks[goldTicks.length - 1];
-  if (lt && Date.now() / 1000 - lt.t < 20) spot = lt.p;
-  else { try { const j = await cached('goldapi', 8000, () => fetchJSON('https://api.gold-api.com/price/XAU', {}, 6000)); spot = +j.price || null; } catch (_) { } }
-  if (spot && Math.abs(spot - last) / last < 0.03) lastBasis.PAXG = { b: spot - last, t: Date.now() };
-  const lb = lastBasis.PAXG, b = lb && Date.now() - lb.t < 60 * 60 * 1000 ? lb.b : 0;
-  let candles = k.candles.map(c => ({ ...c, open: c.open + b, high: c.high + b, low: c.low + b, close: c.close + b }));
-  let feed = (b ? 'PAXG + spot adjust' : 'PAXG (spot feed down)') + ' · ' + k.feed;
-  if (tf === '1m') {
-    // replace with true spot candles where we have ticks (skip the first, partial minute)
-    const tc = goldTickCandles().slice(1);
-    if (tc.length) {
-      const from = tc[0].time;
-      candles = candles.filter(c => c.time < from).concat(tc).slice(-limit);
-      feed = 'live spot ticks';
+/* Session anchor per instrument, so 4H / 1D candles open at the same time as on TradingView */
+const NY = 'America/New_York';
+const FX_OANDA = new Set(['USD', 'EUR', 'GBP', 'JPY', 'AUD', 'NZD', 'CAD', 'CHF', 'SGD', 'HKD', 'NOK', 'SEK', 'DKK', 'PLN', 'CZK', 'HUF', 'TRY', 'ZAR', 'MXN', 'CNH', 'THB']);
+function anchorFor(ys, meta) {
+  if (ys.endsWith('=X')) return { tz: NY, h: 17, m: 0 };            // forex day starts 17:00 New York
+  if (ys.endsWith('=F') || ys === 'DX-Y.NYB') return { tz: NY, h: 18, m: 0 }; // metals / oil / futures: 18:00 New York
+  const tz = meta?.exchangeTimezoneName, st = meta?.currentTradingPeriod?.regular?.start;
+  if (tz && st) { const off = tzOffset(st, tz), l = (st + off) % 86400; return { tz, h: Math.floor(l / 3600), m: Math.floor(l % 3600 / 60) }; }
+  return null;
+}
+async function yahooRaw(ys, interval, range) {
+  return cached(`yraw|${ys}|${interval}|${range}`, interval === '1m' ? 8000 : 20000, async () => {
+    let data, lastErr;
+    for (const host of ['query1', 'query2']) {
+      try { data = await fetchJSON(`https://${host}.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(ys)}?interval=${interval}&range=${range}&includePrePost=false`); break; }
+      catch (e) { lastErr = e; }
     }
+    if (!data) throw lastErr;
+    const res = data?.chart?.result?.[0];
+    if (!res || !res.timestamp) throw new Error('No data for symbol ' + ys);
+    const q = res.indicators.quote[0], candles = [];
+    res.timestamp.forEach((t, i) => {
+      if (q.open[i] == null || q.close[i] == null || q.high[i] == null || q.low[i] == null) return;
+      candles.push({ time: t, open: q.open[i], high: q.high[i], low: q.low[i], close: q.close[i], volume: q.volume?.[i] || 0 });
+    });
+    return { meta: res.meta || {}, candles };
+  });
+}
+// which Yahoo request builds each timeframe (4H and, for 24h markets, 1D are built from 1H so they open at the right hour)
+function yahooPlan(tf, anchor24h) {
+  if (tf === '4h') return ['60m', '2y', 14400];
+  if (tf === '1d' && anchor24h) return ['60m', '2y', 86400];
+  const [interval, range] = YH[tf] || YH['1h'];
+  return [interval, range, 0];
+}
+async function yahooSeries(ys, tf) {
+  const pre = ys.endsWith('=X') || ys.endsWith('=F') || ys === 'DX-Y.NYB';
+  const [interval, range, agg] = yahooPlan(tf, pre);
+  const r = await yahooRaw(ys, interval, range);
+  const anchor = anchorFor(ys, r.meta);
+  let candles = r.candles.slice();
+  // drop Yahoo's extra "live" row that duplicates the last bar
+  if (candles.length > 1 && candles[candles.length - 1].time - candles[candles.length - 2].time < ({ '1m': 60, '5m': 300, '15m': 900, '30m': 1800, '60m': 3600, '1d': 86400 }[interval] || 60)) {
+    const l = candles.pop(), p = candles[candles.length - 1];
+    candles[candles.length - 1] = { ...p, high: Math.max(p.high, l.high), low: Math.min(p.low, l.low), close: l.close };
   }
-  return { symbol: 'XAUUSD', tv: 'OANDA:XAUUSD', currency: 'USD', name: 'Gold spot (XAU/USD)', priceNote: 'spot', feed, candles };
+  if (agg) candles = aggregate(candles, agg, anchor);
+  return { meta: r.meta, anchor, candles };
+}
+
+/* GOLD (XAUUSD) — shaped like OANDA:XAUUSD on TradingView:
+   history = COMEX gold (same trading hours as spot, closed at weekends, same 18:00 NY session)
+   shifted by the measured futures→spot difference; the last minutes (Yahoo is ~10 min delayed)
+   come from live spot ticks, or PAX Gold shifted to spot. */
+async function goldSpotNow() {
+  wantGoldTicks();
+  const lt = goldTicks[goldTicks.length - 1];
+  if (lt && Date.now() / 1000 - lt.t < 20) return lt.p;
+  try { const j = await cached('goldapi', 8000, () => fetchJSON('https://api.gold-api.com/price/XAU', {}, 6000)); return +j.price || null; } catch (_) { return null; }
+}
+function median(a) { const s = a.slice().sort((x, y) => x - y); return s.length ? s[Math.floor(s.length / 2)] : null; }
+async function goldProxy1m() { // minute bars that track spot gold in real time
+  const spot = await goldSpotNow();
+  const k = await cached('paxg1m', 8000, () => cryptoCandles('PAXGUSDT', '1m', 300)).catch(() => null);
+  let px = k?.candles || [];
+  if (px.length && spot && Math.abs(spot - px[px.length - 1].close) / spot < 0.03) {
+    const b = spot - px[px.length - 1].close;
+    px = px.map(c => ({ ...c, open: c.open + b, high: c.high + b, low: c.low + b, close: c.close + b }));
+  } else if (!spot) px = [];
+  // real spot ticks win where we have them
+  const tc = goldTickCandles().slice(1);
+  if (tc.length) px = px.filter(c => c.time < tc[0].time).concat(tc);
+  return { spot, px };
+}
+async function goldFuturesBasis() {
+  return cached('goldbasis', 60000, async () => {
+    const [f, g] = await Promise.all([yahooRaw('GC=F', '1m', '1d'), goldProxy1m()]);
+    const m = new Map(g.px.map(c => [c.time, c.close]));
+    const diffs = f.candles.filter(c => m.has(c.time)).slice(-60).map(c => m.get(c.time) - c.close);
+    if (diffs.length >= 5) return median(diffs);
+    const lf = f.candles[f.candles.length - 1];
+    return g.spot && lf && Date.now() / 1000 - lf.time < 1800 ? g.spot - lf.close : (lastBasis.GC?.b ?? null);
+  });
+}
+async function goldSpotCandles(tf, limit) {
+  const [fs, basis, g] = await Promise.all([yahooSeries('GC=F', tf), goldFuturesBasis(), goldProxy1m()]);
+  if (basis == null || !fs.candles.length) throw new Error('gold basis unavailable');
+  lastBasis.GC = { b: basis, t: Date.now() };
+  const sh = c => ({ ...c, open: c.open + basis, high: c.high + basis, low: c.low + basis, close: c.close + basis });
+  let candles = fs.candles.map(sh);
+  // fill the delayed tail with live spot data (only while the gold market is open)
+  const raw1 = (await yahooRaw('GC=F', '1m', '1d').catch(() => null))?.candles || [];
+  const lastF = raw1.length ? raw1[raw1.length - 1].time : 0, now = Date.now() / 1000;
+  let feed = 'COMEX gold → spot';
+  if (lastF && now - lastF < 45 * 60) {
+    const sec = TF_SEC[tf] || 3600, tail = g.px.filter(c => c.time > lastF);
+    for (const c of tail) {
+      const b = bucketOf(c.time, sec, fs.anchor), L = candles[candles.length - 1];
+      if (L && L.time === b) { L.high = Math.max(L.high, c.high); L.low = Math.min(L.low, c.low); L.close = c.close; }
+      else if (!L || b > L.time) candles.push({ time: b, open: c.open, high: c.high, low: c.low, close: c.close, volume: 0 });
+    }
+    if (tail.length) feed += ' + live spot';
+  }
+  return { symbol: 'XAUUSD', tv: 'OANDA:XAUUSD', currency: 'USD', name: 'Gold spot (XAU/USD)', priceNote: 'spot', feed, candles: candles.slice(-limit) };
+}
+// old real-time PAXG method, kept as a backup if Yahoo is down
+async function goldPaxgCandles(tf, limit) {
+  const k = await cryptoCandles('PAXGUSDT', tf, limit);
+  const spot = await goldSpotNow(), last = k.candles[k.candles.length - 1]?.close;
+  const b = spot && last && Math.abs(spot - last) / last < 0.03 ? spot - last : 0;
+  return { symbol: 'XAUUSD', tv: 'OANDA:XAUUSD', currency: 'USD', name: 'Gold spot (XAU/USD)', priceNote: 'spot', feed: 'PAXG ' + (b ? '+ spot adjust' : '(spot feed down)'),
+    candles: k.candles.map(c => ({ ...c, open: c.open + b, high: c.high + b, low: c.low + b, close: c.close + b })) };
 }
 
 async function yahooCandles(symbol, market, tf, limit) {
   const ys = normYahoo(symbol, market);
-  if (ys === 'GC=F') { try { return await goldSpotCandles(tf, limit); } catch (_) { /* fall back to Yahoo below */ } }
-  const [interval, range] = YH[tf] || YH['1h'];
-  let data, lastErr;
-  for (const host of ['query1', 'query2']) {
-    try {
-      data = await fetchJSON(`https://${host}.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(ys)}?interval=${interval}&range=${range}&includePrePost=false`);
-      break;
-    } catch (e) { lastErr = e; }
+  if (ys === 'GC=F') {
+    try { return await goldSpotCandles(tf, limit); } catch (_) { }
+    try { return await goldPaxgCandles(tf, limit); } catch (_) { /* fall back to plain Yahoo below */ }
   }
-  if (!data) throw lastErr;
-  const res = data?.chart?.result?.[0];
-  if (!res || !res.timestamp) throw new Error('No data for symbol ' + ys);
-  const q = res.indicators.quote[0];
-  let candles = [];
-  res.timestamp.forEach((t, i) => {
-    if (q.open[i] == null || q.close[i] == null || q.high[i] == null || q.low[i] == null) return;
-    candles.push({ time: t, open: q.open[i], high: q.high[i], low: q.low[i], close: q.close[i], volume: q.volume?.[i] || 0 });
-  });
-  if (tf === '4h') candles = aggregate(candles, 14400);
-  let tv = tvForYahoo(ys), name = res.meta?.longName || res.meta?.shortName, priceNote = null;
+  const r = await yahooSeries(ys, tf);
+  let candles = r.candles;
+  let tv = tvForYahoo(ys), name = r.meta.longName || r.meta.shortName, priceNote = null;
   const metal = METAL[ys];
   if (metal && candles.length) {
     const spot = await metalSpot(metal.code);
@@ -259,7 +359,7 @@ async function yahooCandles(symbol, market, tf, limit) {
       tv = metal.tvFut; priceNote = 'futures (spot feed unavailable)';
     }
   }
-  return { symbol: ys, tv, currency: res.meta?.currency, name, priceNote, candles: candles.slice(-limit) };
+  return { symbol: ys, tv, currency: r.meta.currency, name, priceNote, feed: ys.endsWith('=X') ? 'FX (Yahoo)' : 'Yahoo', candles: candles.slice(-limit) };
 }
 
 /* ---------- SRI LANKA CSE (unofficial public JSON API on cse.lk) ---------- */
@@ -386,7 +486,8 @@ app.get('/api/candles', async (req, res) => {
   // round the limit up so many different requests share one cached upstream call
   const fetchLimit = limit <= 100 ? 100 : limit <= 500 ? 500 : 1000;
   try {
-    const ttl = tf === '1m' ? 8000 : 20000;
+    const gold = market === 'forex' && ['XAUUSD', 'GOLD'].includes(symbol.toUpperCase());
+    const ttl = gold ? 5000 : tf === '1m' ? 8000 : 20000;
     const out = await cached(`${market}|${symbol.toUpperCase()}|${tf}|${fetchLimit}`, ttl, async () => {
       if (market === 'crypto') return cryptoCandles(symbol, tf, fetchLimit);
       if (market === 'cse') return cseCandles(symbol, tf, fetchLimit);
