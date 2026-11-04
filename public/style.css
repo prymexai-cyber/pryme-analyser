@@ -680,3 +680,19 @@ input.sw:checked::after{transform:translateX(18px)}
   body[data-tab=signals] #deepCard{grid-column:2;grid-row:2}
   body[data-tab=signals] .news-card{grid-column:2;grid-row:3}
 }
+
+/* ===== live quote on the chart (TradingView style) ===== */
+.tv-quote{position:absolute;left:10px;top:52px;z-index:6;display:flex;align-items:stretch;gap:4px;font-family:-apple-system,BlinkMacSystemFont,Roboto,sans-serif}
+.tv-quote button{display:flex;flex-direction:column;align-items:center;justify-content:center;min-width:92px;padding:4px 8px;border-radius:6px;border:1px solid;background:rgba(255,255,255,.92)}
+.tv-quote .q-sell{border-color:#f23645;color:#f23645}
+.tv-quote .q-buy{border-color:#2962ff;color:#2962ff}
+.tv-quote b{font:600 14px -apple-system,Roboto,sans-serif}
+.tv-quote small{font-size:10px;font-weight:600;letter-spacing:.06em}
+.tv-quote button:hover{color:#fff}
+.tv-quote .q-sell:hover{background:#f23645}.tv-quote .q-buy:hover{background:#2962ff}
+.tv-quote .q-sp{align-self:center;font:600 11px -apple-system,Roboto,sans-serif;color:#787b86;min-width:22px;text-align:center}
+body[data-chart=dark] .tv-quote button{background:rgba(19,23,34,.9)}
+.bar-cd{position:absolute;z-index:5;display:none;text-align:center;font:500 11px -apple-system,Roboto,sans-serif;color:#fff;padding:1px 0;pointer-events:none}
+.bar-cd.up{background:#089981}.bar-cd.down{background:#f23645}
+.tm-warn{background:rgba(246,194,74,.1);border:1px solid rgba(246,194,74,.35);color:#f7e2b0;border-radius:8px;padding:8px 10px;margin-bottom:10px;font-family:var(--sans);font-size:12.5px;line-height:1.5}
+@media (max-width:760px){.tv-quote{top:30px}.tv-quote button{min-width:76px;padding:3px 6px}.tv-quote b{font-size:12.5px}}
