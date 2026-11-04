@@ -7,7 +7,7 @@
    ============================================================ */
 'use strict';
 (() => {
-  const SYNC_KEYS = ['pa_settings', 'pa_accounts', 'pa_signals', 'pa_sigstats', 'pa_batch', 'pa_log', 'pa_events', 'pa_profile', 'pa_market', 'pa_tf', 'pa_view', 'pa_view2', 'pa_seq', 'pa_hperiod'];
+  const SYNC_KEYS = ['pa_settings', 'pa_accounts', 'pa_signals', 'pa_sigstats', 'pa_batch', 'pa_log', 'pa_events', 'pa_profile', 'pa_market', 'pa_tf', 'pa_view', 'pa_view2', 'pa_seq', 'pa_hperiod', 'pa_draw'];
   const raw = k => { try { return localStorage.getItem(k); } catch { return null; } };
   const put = (k, v) => { try { v == null ? localStorage.removeItem(k) : localStorage.setItem(k, v); } catch { } };
   const device = raw('pa_device') || (() => { const d = Math.random().toString(36).slice(2, 10); put('pa_device', d); return d; })();
