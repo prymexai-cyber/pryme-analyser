@@ -577,7 +577,11 @@ app.post('/api/ai', async (req, res) => {
   res.status(502).json({ error: 'All AI keys failed', errors });
 });
 
-app.get('*', (_, res) => res.sendFile(path.join(__dirname, 'public', 'index.html')));
+// a missing file (icon, image, script…) must be a real 404 — never the web page, or app stores reject the icons
+app.get('*', (req, res) => {
+  if (/\.[a-z0-9]{2,5}$/i.test(req.path)) return res.status(404).type('text/plain').send('Not found: ' + req.path);
+  res.sendFile(path.join(__dirname, 'public', 'index.html'));
+});
 
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => console.log(`Pryme Quant running on http://localhost:${PORT}`));
