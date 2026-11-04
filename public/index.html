@@ -17,6 +17,10 @@
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <meta name="apple-mobile-web-app-title" content="Pryme Quant">
 <link rel="stylesheet" href="style.css">
+<script>
+  // service worker (installable app) — registered right in the page so app builders can find it
+  if ('serviceWorker' in navigator) navigator.serviceWorker.register('/sw.js').catch(function () { });
+</script>
 <script src="https://unpkg.com/lightweight-charts@4.2.0/dist/lightweight-charts.standalone.production.js"></script>
 </head>
 <body>
