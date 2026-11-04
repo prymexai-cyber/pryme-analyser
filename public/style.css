@@ -398,3 +398,84 @@ td.acts{display:flex;gap:4px;justify-content:flex-end}
 .ck.ok{background:rgba(25,227,162,.08);color:#7fe8c6}
 .ck.no{background:rgba(255,77,109,.1);color:#ff8fa3}
 .setup-act button.dim{opacity:.55;filter:saturate(.3)}
+.tcode{color:var(--brand);font:600 10.5px var(--mono)}
+
+/* ===== mobile app shell ===== */
+.bottom-nav{display:none}
+.me-card{display:none}
+@media (max-width:760px){
+  body{padding-bottom:calc(74px + env(safe-area-inset-bottom))}
+  body[data-tab] [data-tabs]{display:none}
+  body[data-tab=home] [data-tabs~=home],
+  body[data-tab=signals] [data-tabs~=signals],
+  body[data-tab=live] [data-tabs~=live],
+  body[data-tab=trades] [data-tabs~=trades],
+  body[data-tab=account] [data-tabs~=account]{display:block}
+  body[data-tab] .controls[data-tabs]{display:none}
+  body[data-tab=home] .controls,body[data-tab=live] .controls{display:flex}
+  body[data-tab=live] .chart-area{height:calc(100vh - 330px);min-height:360px}
+  body[data-tab=live] #acctSection .demo-head,body[data-tab=live] #acctSection .tabs2,body[data-tab=live] #acctSection #acctNote{display:none}
+  .layout{display:flex;flex-direction:column}
+  .main-col,.side{display:contents}
+  .me-card{padding:18px}
+  .me-head{display:flex;align-items:center;gap:14px;padding-bottom:14px;border-bottom:1px solid var(--line);margin-bottom:8px}
+  .me-head b{display:block;font-size:18px}
+  .me-head small{display:block;color:var(--dim);font:400 12px var(--mono);word-break:break-all}
+  .me-list button{display:block;width:100%;text-align:left;padding:14px 6px;border-bottom:1px solid var(--line);font-size:15px;color:var(--text)}
+  .me-list button:last-child{border-bottom:0}
+  .me-list button.danger{color:var(--short)}
+  .me-list .hidden{display:none}
+  .bottom-nav{display:flex;position:fixed;left:0;right:0;bottom:0;z-index:45;background:rgba(10,13,19,.96);backdrop-filter:blur(14px);border-top:1px solid var(--line);padding:6px 6px calc(6px + env(safe-area-inset-bottom))}
+  .bottom-nav button{flex:1;display:flex;flex-direction:column;align-items:center;gap:3px;padding:6px 0;color:var(--dim);font-size:11px;font-weight:500;position:relative;border-radius:12px}
+  .bottom-nav svg{width:23px;height:23px;fill:none;stroke:currentColor;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round}
+  .bottom-nav button.on{color:var(--brand)}
+  .bottom-nav button.on svg{filter:drop-shadow(0 0 6px rgba(198,255,61,.45))}
+  .bottom-nav button[data-tab=live].on{background:rgba(198,255,61,.08)}
+  .nav-dot{position:absolute;top:4px;right:calc(50% - 16px);width:8px;height:8px;border-radius:50%;background:var(--short);box-shadow:0 0 0 2px #0a0d13}
+  .toast{bottom:calc(86px + env(safe-area-inset-bottom))}
+  .topbar #btnHelp,.topbar #btnSettings,.topbar .profile-wrap{display:none}
+  .foot{padding:4px 14px 20px}
+}
+.is-app .topbar{padding-top:calc(12px + env(safe-area-inset-top))}
+
+.mode-l{margin-bottom:10px}
+#btnBacktest{margin-top:8px}
+.bt-table td,.bt-table th{padding:9px 10px}
+.bt-table td:first-child{color:var(--muted);font-family:var(--sans)}
+@media (max-width:760px){
+  body[data-tab=home] .controls[data-tabs],body[data-tab=live] .controls[data-tabs]{display:flex}
+  .layout{align-items:stretch}
+  body[data-tab=home] .lvl-box{display:none!important}
+  .lvl-box{top:8px;bottom:auto;left:8px;max-width:60%;min-width:0;padding:7px 9px;font-size:10.5px;background:rgba(10,14,20,.86)}
+  .lvl-box .lb-head{margin-bottom:4px}
+  .lvl-box .r{padding:1px 0;gap:8px}
+  .lvl-box .r.tp:nth-of-type(n+5){display:none}
+  .lb-pos .r:last-child{display:none}
+  .chart-legend .l{display:none}
+}
+@media (max-width:760px){
+  body[data-tab=live] #marketSeg,body[data-tab=live] .sym-wrap,body[data-tab=live] .quick,
+  body[data-tab=live] .sym-sub,body[data-tab=live] .chart-legend,body[data-tab=live] .ind-row{display:none!important}
+  body[data-tab=live] .controls{padding-bottom:8px}
+  body[data-tab=live] .chart-head{padding:10px 14px 6px}
+  body[data-tab=live] .chart-area{height:calc(100vh - 300px - env(safe-area-inset-bottom));min-height:380px}
+}
+
+/* single chart */
+.chart-area{border-top:1px solid var(--line)}
+.tv-badge{font:600 10.5px var(--mono);color:var(--long);border:1px solid rgba(25,227,162,.3);border-radius:7px;padding:2px 7px;letter-spacing:.03em}
+
+/* ===== TradingView look ===== */
+.chart-area{background:#131722}
+.tv-legend{position:absolute;left:10px;top:8px;z-index:4;pointer-events:none;font:400 12.5px -apple-system,BlinkMacSystemFont,"Trebuchet MS",Roboto,sans-serif;color:#d1d4dc;line-height:1.6;max-width:calc(100% - 90px)}
+.tv-legend b{font-weight:600}
+.tv-legend em{font-style:normal;margin:0 6px 0 2px}
+.tv-legend .up em,.tv-legend em.up{color:#089981}
+.tv-legend .down em,.tv-legend em.down{color:#f23645}
+.tv-legend .tvl-dot{display:inline-block;width:7px;height:7px;border-radius:50%;background:#089981;margin:0 8px 1px 4px;box-shadow:0 0 0 3px rgba(8,153,129,.25)}
+.tv-legend .tvl-2 span{margin-left:8px;font-size:11.5px}
+.tv-legend .e20{color:#2962ff}.tv-legend .e50{color:#ff9800}.tv-legend .e200{color:#ab47bc}
+.pbox.win{background:rgba(8,153,129,.2);box-shadow:none}
+.pbox.loss{background:rgba(242,54,69,.2);box-shadow:none}
+.lvl-box{top:auto;bottom:40px}
+@media (max-width:760px){.tv-legend{font-size:11px}.tv-legend .tvl-2 span{display:none}.lvl-box{top:auto;bottom:34px}}
