@@ -1,5 +1,5 @@
 /* ============================================================
-   PRYME ANALYSER — frontend
+   PRYME QUANT — frontend
    ============================================================ */
 'use strict';
 const $ = s => document.querySelector(s);
@@ -33,7 +33,7 @@ const S = {
   symbol: null,
   tf: store.get('pa_tf', '15m'),
   candles: [], meta: {}, ind: null,
-  ws: null, poll: null, view: store.get('pa_view', 'tv'), searchHits: null,
+  ws: null, poll: null, view: (store.get('pa_view2', null) || 'pryme'), searchHits: null,
   setups: [], analysis: null, priceLines: [], selected: null,
   news: [],
   settings: Object.assign({ keys: [], lang: 'singlish', riskPct: 1, active: 'demo' }, store.get('pa_settings', {})),
@@ -44,7 +44,7 @@ const S = {
   livePrices: {}, acctView: null, acctTab: 'open',
   autoBusy: false, autoQueue: [], autoRetry: {}, batch: store.get('pa_batch', 0), batchDone: {}
 };
-S.settings.pro = Object.assign({ enabled: true, minRR: 1.8, minAdx: 18, minSlAtr: 1.3, newsMins: 45, streak: 2, pauseHours: 2, dailyPct: 3 }, S.settings.pro || {});
+S.settings.pro = Object.assign({ enabled: true, mode: 'highwin', minRR: 1.8, minAdx: 18, minSlAtr: 1.3, newsMins: 45, streak: 2, pauseHours: 2, dailyPct: 3 }, S.settings.pro || {});
 S.settings.auto = Object.assign({ enabled: true, trigger: 'tp1', onSL: false, expiryBars: 16, autoTake: 'off', minConf: 60, maxOpen: 2 }, S.settings.auto || {});
 if (!S.accounts) {
   // migrate older single demo wallet
@@ -205,6 +205,17 @@ function analyseIndicators(cs) {
   // RSI divergence (last two swing lows/highs)
   if (L.length === 2 && r[L[1].i] != null && r[L[0].i] != null && L[1].p < L[0].p && r[L[1].i] > r[L[0].i]) out.divergence = 'Bullish RSI divergence';
   if (H.length === 2 && r[H[1].i] != null && r[H[0].i] != null && H[1].p > H[0].p && r[H[1].i] < r[H[0].i]) out.divergence = 'Bearish RSI divergence';
+  // confirmation candle: strong close beyond the previous bar, rejection wick, or engulfing
+  const conf = k => {
+    const c = cs[k], c0 = cs[k - 1]; if (!c || !c0) return { bull: false, bear: false };
+    const rg = (c.high - c.low) || 1e-9, body = Math.abs(c.close - c.open);
+    const lw = Math.min(c.open, c.close) - c.low, uw = c.high - Math.max(c.open, c.close);
+    return {
+      bull: c.close > c.open && (c.close > c0.high || (lw > body * 1.5 && (c.close - c.low) / rg > 0.6) || (c0.close < c0.open && c.close >= c0.open)),
+      bear: c.close < c.open && (c.close < c0.low || (uw > body * 1.5 && (c.high - c.close) / rg > 0.6) || (c0.close > c0.open && c.close <= c0.open))
+    };
+  };
+  out.conf1 = conf(n - 1); out.conf2 = conf(n - 2);
   out.score = scoreOf(out);
   return out;
 }
@@ -331,25 +342,27 @@ function initChart() {
   const el = $('#chart');
   chart = LightweightCharts.createChart(el, {
     autoSize: true,
-    layout: { background: { type: 'solid', color: 'transparent' }, textColor: '#8892a4', fontFamily: 'JetBrains Mono, monospace', fontSize: 11 },
-    grid: { vertLines: { color: 'rgba(255,255,255,0.035)' }, horzLines: { color: 'rgba(255,255,255,0.035)' } },
-    rightPriceScale: { borderColor: '#1d2633', scaleMargins: { top: 0.08, bottom: 0.2 } },
-    timeScale: { borderColor: '#1d2633', timeVisible: true, secondsVisible: false, rightOffset: 8 },
-    crosshair: { mode: 0, vertLine: { color: '#3a475c', labelBackgroundColor: '#273244' }, horzLine: { color: '#3a475c', labelBackgroundColor: '#273244' } },
+    // TradingView's own dark theme (same colours as tradingview.com)
+    layout: { background: { type: 'solid', color: '#131722' }, textColor: '#b2b5be', fontFamily: '-apple-system, BlinkMacSystemFont, "Trebuchet MS", Roboto, Ubuntu, sans-serif', fontSize: 12 },
+    grid: { vertLines: { color: 'rgba(42,46,57,0.6)' }, horzLines: { color: 'rgba(42,46,57,0.6)' } },
+    rightPriceScale: { borderColor: '#2a2e39', scaleMargins: { top: 0.1, bottom: 0.2 } },
+    timeScale: { borderColor: '#2a2e39', timeVisible: true, secondsVisible: false, rightOffset: 10, barSpacing: 8 },
+    crosshair: { mode: 0, vertLine: { color: '#758696', style: 3, labelBackgroundColor: '#4c525e' }, horzLine: { color: '#758696', style: 3, labelBackgroundColor: '#4c525e' } },
     localization: { timeFormatter: t => new Date(t * 1000).toLocaleString('en-GB', { timeZone: 'Asia/Colombo', day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' }) }
   });
-  candleS = chart.addCandlestickSeries({ upColor: '#19e3a2', downColor: '#ff4d6d', borderVisible: false, wickUpColor: '#19e3a2', wickDownColor: '#ff4d6d' });
+  candleS = chart.addCandlestickSeries({ upColor: '#089981', downColor: '#f23645', borderVisible: false, wickUpColor: '#089981', wickDownColor: '#f23645' });
   volS = chart.addHistogramSeries({ priceScaleId: 'vol', priceFormat: { type: 'volume' }, lastValueVisible: false, priceLineVisible: false });
   chart.priceScale('vol').applyOptions({ scaleMargins: { top: 0.84, bottom: 0 } });
   const line = c => chart.addLineSeries({ color: c, lineWidth: 1, priceLineVisible: false, lastValueVisible: false, crosshairMarkerVisible: false });
-  e20S = line('#4ea8ff'); e50S = line('#f6c24a'); e200S = line('#b07cff');
+  e20S = line('#2962ff'); e50S = line('#ff9800'); e200S = line('#ab47bc');
+  chart.subscribeCrosshairMove(prm => tvLegend(prm && prm.time));
 }
 function drawSeries() {
   const cs = S.candles; if (!cs.length) return;
   S.prec = precisionFor(cs[cs.length - 1].close, S.market);
   candleS.applyOptions({ priceFormat: { type: 'price', precision: S.prec, minMove: 1 / 10 ** S.prec } });
   candleS.setData(cs.map(c => ({ time: c.time, open: c.open, high: c.high, low: c.low, close: c.close })));
-  volS.setData(cs.map(c => ({ time: c.time, value: c.volume || 0, color: c.close >= c.open ? 'rgba(25,227,162,.25)' : 'rgba(255,77,109,.25)' })));
+  volS.setData(cs.map(c => ({ time: c.time, value: c.volume || 0, color: c.close >= c.open ? 'rgba(8,153,129,.45)' : 'rgba(242,54,69,.45)' })));
   const I = S.ind;
   const ln = arr => cs.map((c, i) => arr[i] == null ? null : { time: c.time, value: arr[i] }).filter(Boolean);
   e20S.setData(ln(I.series.e20)); e50S.setData(ln(I.series.e50)); e200S.setData(ln(I.series.e200));
@@ -360,13 +373,17 @@ function drawSetupLines(idx) {
   const s = S.setups[idx]; if (!s) return;
   S.selected = idx;
   const add = (price, color, title, style = 0, w = 2) => S.priceLines.push(candleS.createPriceLine({ price, color, lineWidth: w, lineStyle: style, axisLabelVisible: true, title }));
-  add(s.entry, '#4ea8ff', `ENTRY #${idx + 1}`, 0, 2);
+  const taken = chartItems().some(p => p.sigId && p.sigId === s.sigId);
+  const busy = chartItems().length > 0;
+  if (!taken) {
+  add(s.entry, '#4ea8ff', `SETUP #${idx + 1} ENTRY`, 0, 2);
   add(s.stopLoss, '#ff4d6d', 'SL', 0, 2);
   add(s.tp1, '#19e3a2', 'TP1', 2, 1);
   add(s.tp2, '#19e3a2', 'TP2', 2, 2);
   add(s.tp3, '#19e3a2', 'TP3', 3, 1);
-  // faint lines for other setups' entries
-  S.setups.forEach((o, i) => { if (i !== idx) add(o.entry, 'rgba(78,168,255,.35)', `#${i + 1}`, 1, 1); });
+  }
+  // faint lines for other setups' entries (hidden while a trade is running, to keep the chart clean)
+  if (!busy) S.setups.forEach((o, i) => { if (i !== idx) add(o.entry, 'rgba(78,168,255,.35)', `#${i + 1}`, 1, 1); });
   const last = S.candles[S.candles.length - 1];
   S.setupMarker = { time: last.time, position: s.direction === 'long' ? 'belowBar' : 'aboveBar', color: s.direction === 'long' ? '#19e3a2' : '#ff4d6d', shape: s.direction === 'long' ? 'arrowUp' : 'arrowDown', text: `#${idx + 1} ${s.direction === 'long' ? 'BUY' : 'SELL'}` };
   updateMarkers(); drawBoxes(); S.lvlHidden = false; renderLvlBox();
@@ -377,9 +394,10 @@ function drawSetupLines(idx) {
 function renderLvlBox() {
   const box = $('#lvlBox'); if (!box) return;
   if (S.lvlHidden) { box.classList.add('hidden'); return; }
-  const s = S.setups[S.selected];
-  const px = S.candles.length ? S.candles[S.candles.length - 1].close : null;
   const pos = chartItems();
+  let s = S.setups[S.selected];
+  if (s && pos.some(p => p.sigId && p.sigId === s.sigId)) s = null; // already taken → show the trade, not the idea
+  const px = S.candles.length ? S.candles[S.candles.length - 1].close : null;
   if (!s && !pos.length) { box.classList.add('hidden'); return; }
   let html = '';
   if (s) {
@@ -397,7 +415,7 @@ function renderLvlBox() {
   pos.forEach(p => {
     const pl = px != null && p.status === 'open' ? plOf(p, px) : null;
     const st = p.status === 'pending' ? p.type : p.tp1Hit ? 'TP1 ✓ · SL at entry' : 'In trade';
-    html += `<div class="lb-pos"><div class="r"><span><span class="tag ${p.dir}">${p.dir === 'long' ? 'BUY' : 'SELL'}</span> ${p.acc === 'real' ? 'REAL' : 'DEMO'} · ${esc(st)}</span><b class="${pl == null ? '' : pl >= 0 ? 'up' : 'down'}">${pl == null ? '' : (pl >= 0 ? '+' : '') + money(pl, p.cur)}</b></div>
+    html += `<div class="lb-pos"><div class="r"><span><span class="tag ${p.dir}">${p.dir === 'long' ? 'BUY' : 'SELL'}</span> ${esc(p.code || '')} ${p.acc === 'real' ? 'REAL' : 'DEMO'} · ${esc(st)}</span><b class="${pl == null ? '' : pl >= 0 ? 'up' : 'down'}">${pl == null ? '' : (pl >= 0 ? '+' : '') + money(pl, p.cur)}</b></div>
       ${p.status === 'open' && px != null ? `<div class="r"><span>Pips</span><b class="${pipsOpen(p, px) >= 0 ? 'up' : 'down'}">${fmtPips(pipsOpen(p, px))}</b></div>` : ''}
       <div class="r"><span>E ${fmt(p.entry, p.prec)} · SL ${fmt(p.sl, p.prec)}</span><span>TP ${p.tp1Hit ? '✓' : fmt(p.tp1, p.prec)} / ${fmt(p.tp2, p.prec)}</span></div></div>`;
   });
@@ -417,24 +435,20 @@ function tvSymbol() {
   return s;
 }
 // Two views: the real TradingView live chart, and the Pryme positions chart (entry / SL / TP boxes drawn on it)
-function setView(v) {
-  if (v) { S.view = v; store.set('pa_view', v); }
-  const tv = S.view !== 'pryme';
-  $$('.chart-tabs button').forEach(b => b.classList.toggle('on', b.dataset.view === (tv ? 'tv' : 'pryme')));
-  $('#tvWrap').classList.toggle('hidden', !tv);
-  $('#chart').classList.toggle('hidden', tv);
-  $('#posLayer').classList.toggle('hidden', tv);
-  const a = $('#tvLink'); if (a) a.href = 'https://www.tradingview.com/chart/?symbol=' + encodeURIComponent(tvSymbol());
-  const tb = $('.chart-tabs [data-view=tv]'); if (tb) tb.textContent = hasAdvanced() ? 'TradingView (positions)' : 'TradingView live';
-  if (tv && hasAdvanced()) {
-    ensureAdvanced();
-  } else if (tv) {
-    const src = `https://s.tradingview.com/widgetembed/?frameElementId=tvf&symbol=${encodeURIComponent(tvSymbol())}&interval=${TV_INT[S.tf]}&theme=dark&style=1&timezone=Asia%2FColombo&withdateranges=1&allow_symbol_change=0&saveimage=0&studies=%5B%5D&locale=en`;
-    const w = $('#tvWrap');
-    if (w.dataset.src !== src) { w.innerHTML = `<iframe src="${src}" allowfullscreen></iframe>`; w.dataset.src = src; }
-  } else {
-    setTimeout(() => { try { drawBoxes(); } catch { } }, 50);
-  }
+// ONE chart only: TradingView's chart with your trades drawn on it.
+//  - default: TradingView Lightweight Charts (entry / SL / TP lines + zones, like the reference app)
+//  - if the TradingView Advanced Charts library is installed (public/charting_library), that full chart is used instead
+function setView() {
+  const adv = hasAdvanced();
+  S.view = adv ? 'tv' : 'pryme';
+  $('#tvWrap').classList.toggle('hidden', !adv);
+  $('#chart').classList.toggle('hidden', adv);
+  $('#posLayer').classList.toggle('hidden', adv);
+  const lk = $('#tvLink'); if (lk) lk.href = 'https://www.tradingview.com/chart/?symbol=' + encodeURIComponent(tvSymbol());
+  const bd = $('#tvBadge'); if (bd) bd.textContent = adv ? '● LIVE · TradingView Advanced' : '● LIVE · TradingView chart';
+  $('#tvLegend').classList.toggle('hidden', adv);
+  if (adv) ensureAdvanced();
+  else setTimeout(() => { try { drawBoxes(); } catch { } }, 50);
 }
 
 /* ---------------- data loading / live ---------------- */
@@ -528,7 +542,7 @@ async function loadMarket(opts = {}) {
     S.loadedKey = `${S.market}|${S.symbol.toUpperCase()}`;
     drawSeries(); chart.timeScale().fitContent();
     if (S.candles.length > 150) chart.timeScale().setVisibleLogicalRange({ from: S.candles.length - 150, to: S.candles.length + 8 });
-    updateHeader(); renderIndicators(); updateMarkers(); drawPositions(); renderLvlBox();
+    updateHeader(); renderIndicators(); updateMarkers(); drawPositions(); renderLvlBox(); tvLegend();
     $('#symSub').textContent = [d.name, d.tv || d.symbol, S.market.toUpperCase(), S.tf, d.feed ? 'feed: ' + d.feed : ''].filter(Boolean).join(' · ');
     if (d.priceNote && d.priceNote.startsWith('futures')) { const m = $('#chartMsg'); m.textContent = 'Spot price feed is busy — showing futures prices for now (slightly higher than spot). Chart is set to futures so levels match.'; m.classList.remove('hidden'); }
     if (d.limited) { const m = $('#chartMsg'); m.textContent = 'CSE history is limited right now — the chart fills in as live prices come in. Switch to the TradingView live tab for the full CSE history. AI analysis still uses the day range and 52-week levels.'; m.classList.remove('hidden'); }
@@ -552,11 +566,12 @@ function onTick(c) {
   const newest = !last || c.time >= last.time;
   if (last && c.time === last.time) cs[cs.length - 1] = c; else if (!last || c.time > last.time) cs.push(c);
   candleS.update({ time: c.time, open: c.open, high: c.high, low: c.low, close: c.close });
-  volS.update({ time: c.time, value: c.volume || 0, color: c.close >= c.open ? 'rgba(25,227,162,.25)' : 'rgba(255,77,109,.25)' });
+  volS.update({ time: c.time, value: c.volume || 0, color: c.close >= c.open ? 'rgba(8,153,129,.45)' : 'rgba(242,54,69,.45)' });
   S.livePrices[S.market + '|' + S.symbol.toUpperCase()] = c.close;
   updateHeader();
   if (S.selected != null) renderLvlBox();
   if (newest) liveCheck(c.close);
+  if (!S.legendHover) tvLegend();
   tvForward(c);
 }
 function startLive() {
@@ -599,7 +614,7 @@ function updateHeader() {
   $('#lastPrice').textContent = fmt(last);
   const el = $('#lastChg'); el.textContent = `${ch >= 0 ? '+' : ''}${fmt(ch)} (${pct >= 0 ? '+' : ''}${pct.toFixed(2)}%)`;
   el.className = 'chg ' + (ch >= 0 ? 'up' : 'down');
-  document.title = `${fmt(last)} ${S.symbol.toUpperCase()} · Pryme Analyser`;
+  document.title = `${fmt(last)} ${S.symbol.toUpperCase()} · Pryme Quant`;
 }
 function renderIndicators() {
   const I = S.ind; if (!I) return;
@@ -660,7 +675,7 @@ function buildPrompt(I, htf, quant) {
     fibonacci: I.fib && { impulse: I.fib.dir, high: r(I.fib.hi), low: r(I.fib.lo), f50: r(I.fib.f5), f618: r(I.fib.f618), f786: r(I.fib.f786) },
     unfilledFVGs: I.fvg.map(g => ({ type: g.type, top: r(g.top), bottom: r(g.bot) })),
     lastCandlePatterns: I.patterns, volumeVsAvg: I.volRatio && +I.volRatio.toFixed(2),
-    higherTimeframe: htf, cseQuote: S.meta.quote || undefined,
+    higherTimeframe: htf, secondHigherTimeframe: S.lastHtf2 || undefined, cseQuote: S.meta.quote || undefined,
     quantEngine: { score: quant.score, bias: quant.bias, candidateSetups: quant.setups.map(s => ({ name: s.name, direction: s.direction, entry: r(s.entry), stopLoss: r(s.stopLoss), tp1: r(s.tp1), tp2: r(s.tp2), tp3: r(s.tp3) })) },
     todaysHeadlines: S.news.slice(0, 8).map(n => n.title),
     recentSignalResultsOnThisSymbol: perfFor(S.symbol.toUpperCase()),
@@ -683,6 +698,7 @@ Rules:
 - confidence = honest probability (0-100) that TP1 is hit before SL.
 - WIN-RATE FIRST: quality over quantity. Rank the best setup first. Prefer entries at a level where liquidity was already swept or price is in discount (longs) / premium (shorts), aligned with the higher timeframe. Counter-trend ideas must get confidence below 50.
 - Put stops beyond the liquidity (beyond the swing + at least 0.3 ATR buffer) and NEVER closer than 1.3 × ATR from entry — tight stops inside the noise are the #1 cause of losses. Never at an obvious round number. TP1 about 1R (before the nearest opposing level) so it gets hit often; TP2 at least 2R.
+- ${S.settings.pro.mode === 'highwin' ? 'HIGH WIN-RATE MODE: only setups where BOTH higher timeframes agree, entered at a key level (limit) or after a confirmation candle close (market). TP1 about 0.7R. Fewer trades is fine — 0 good trades is better than 3 bad ones (return 1 conservative limit setup if nothing qualifies).' : ''}
 - Trend-following only when the higher timeframe agrees. If ADX < 18 (choppy), prefer limit entries at range extremes only. Avoid entries 45 minutes around high-impact news listed in upcomingNews.
 - Learn from recentSignalResultsOnThisSymbol: if recent signals were stopped out, adjust (wait for confirmation, wider/safer stop, or trade with the HTF trend only).
 - ${langLine()}
@@ -698,8 +714,9 @@ function parseAIJson(t) {
   return JSON.parse(t.slice(a, b + 1));
 }
 
-async function htfInfo() {
-  const h = HTF[S.tf]; if (!h) return null;
+const HTF2 = { '1m': '1h', '5m': '4h', '15m': '1d', '30m': '1d', '1h': '1d', '4h': null, '1d': null };
+async function htfInfo(h = HTF[S.tf]) {
+  if (!h) return null;
   try {
     const d = await fetchCandles(S.market, S.symbol, h, 400);
     if (!d.candles || d.candles.length < 50) return null;
@@ -714,7 +731,8 @@ async function runAnalysis() {
   const st = $('#aiStatus'); st.className = 'ai-status'; st.textContent = 'Reading structure, indicators, higher timeframe and news…';
   try {
     S.ind = analyseIndicators(S.candles);
-    const htf = await htfInfo();
+    const [htf, htf2] = await Promise.all([htfInfo(HTF[S.tf]), htfInfo(HTF2[S.tf])]);
+    S.lastHtf2 = htf2;
     const quant = quantSetups(S.ind, htf?.bias);
     const keys = S.settings.keys.filter(k => k.enabled !== false && k.key);
     let result = null, by = 'Pryme quant engine (add an AI key for full AI analysis)';
@@ -739,7 +757,7 @@ async function runAnalysis() {
     S.analysis = {
       bias: (result?.bias || quant.bias).toUpperCase(), score: isFinite(+result?.score) ? +result.score : quant.score,
       summary: result?.summary || autoSummary(S.ind, htf, quant), newsImpact: result?.newsImpact || '',
-      keyLevels: result?.keyLevels, invalidation: result?.invalidation, by, htf
+      keyLevels: result?.keyLevels, invalidation: result?.invalidation, by, htf, htf2
     };
     const RANK = { 'A+': 4, A: 3, B: 2, C: 1 };
     await loadCalendar();
@@ -755,7 +773,7 @@ async function runAnalysis() {
     btn.classList.remove('busy'); btn.querySelector('.btn-label').textContent = 'Analyse with AI';
   }
 }
-function gradeOf(s, A) {
+function gradeOf(s, A, ctx = {}) {
   // old score (kept as one input) + the pro checklist
   let pts = 0;
   const rr = Math.abs(s.tp2 - s.entry) / Math.abs(s.entry - s.stopLoss);
@@ -765,11 +783,17 @@ function gradeOf(s, A) {
   if (htf && ((htf === 'bullish' && d === 'long') || (htf === 'bearish' && d === 'short'))) pts += 2;
   else if (htf && htf !== 'neutral') pts -= 2;
   if ((A.bias.includes('BULL') && d === 'long') || (A.bias.includes('BEAR') && d === 'short')) pts += 1;
-  s.checks = proChecks(s, A);
+  s.checks = proChecks(s, A, ctx);
   const failed = s.checks.filter(c => !c.ok);
   const hardFail = failed.some(c => c.hard);
   const P = S.settings.pro;
   if (!P.enabled) { s.ok = pts >= 4; return pts >= 6 ? 'A+' : pts >= 4 ? 'A' : pts >= 2 ? 'B' : 'C'; }
+  if (P.mode === 'highwin') {
+    // high win-rate: every single check must pass
+    s.ok = failed.length === 0 && pts >= 4;
+    if (s.ok) return pts >= 6 ? 'A+' : 'A';
+    return hardFail || failed.length >= 3 ? 'C' : 'B';
+  }
   s.ok = !hardFail && failed.length <= 1 && pts >= 3;
   if (s.ok) return failed.length === 0 && pts >= 5 ? 'A+' : 'A';
   return hardFail || failed.length >= 3 ? 'C' : 'B';
@@ -1053,12 +1077,14 @@ function createPosition(accKey, s, { entry, sl, tp1, tp2, units, market = false,
   const isM = type.startsWith('MARKET');
   const pos = {
     id: uid(), acc: accKey, market: S.market, symbol: S.symbol.toUpperCase(), tf: S.tf, dir: s.direction, type,
+    code: nextTradeCode(), tp3: s.tp3,
     entry: isM ? price : entry, sl, sl0: sl, tp1, tp2, units, remaining: units, cur: curOf(S.market), pip: pipSizeFor(S.market, S.symbol, entry),
     factor: quoteFactor(S.market, S.symbol, entry), status: isM ? 'open' : 'pending', created: Date.now(), opened: isM ? Date.now() : null,
     realized: 0, tp1Hit: false, lastBar: startBar(Date.now()) + 60, prec: S.prec, name: s.name, grade: s.grade, ok: s.ok, auto, batch: S.batch, sigId: s.sigId
   };
   S.accounts[accKey].positions.push(pos); saveAccounts();
   if (isM) chartEvent(pos, 'Entry', 'entry');
+  if (S.selected != null) drawSetupLines(S.selected);
   drawPositions(); S.lvlHidden = false; renderLvlBox();
   return pos;
 }
@@ -1190,7 +1216,7 @@ function renderAccounts() {
     t.innerHTML = '<tr><th>Symbol</th><th>Side</th><th>Status</th><th>Entry</th><th>SL</th><th>TP1</th><th>TP2</th><th>Size</th><th>Now</th><th>Pips</th><th>P/L</th><th></th></tr>' + d.positions.map(p => {
       const px = S.livePrices[p.market + '|' + p.symbol];
       const pl = p.status === 'open' && px != null ? (px - p.entry) * (p.dir === 'long' ? 1 : -1) * p.remaining * p.factor + p.realized : p.realized;
-      return `<tr><td>${esc(p.symbol)} <small style="color:var(--dim)">${p.tf}</small>${p.auto ? ' <small class="autotag">AUTO</small>' : ''}</td><td class="${p.dir === 'long' ? 'up' : 'down'}">${p.dir === 'long' ? 'BUY' : 'SELL'}</td><td>${p.status === 'pending' ? esc(p.type) : p.tp1Hit ? 'Open · TP1 ✓' : 'Open'}</td><td>${fmt(p.entry, p.prec)}</td><td>${fmt(p.sl, p.prec)}</td><td>${fmt(p.tp1, p.prec)}</td><td>${fmt(p.tp2, p.prec)}</td><td>${fmtSize(p, p.remaining)}</td><td>${px != null ? fmt(px, p.prec) : '…'}</td>${(() => { const pp = p.status === 'open' && px != null ? pipsOpen(p, px) : null; return `<td class="${pp == null ? '' : pp >= 0 ? 'up' : 'down'}">${pp == null ? '—' : fmtPips(pp)}</td>`; })()}<td class="${pl >= 0 ? 'up' : 'down'}">${money(pl, p.cur)}</td><td class="acts">${p.status === 'open' ? `${!p.tp1Hit ? `<button class="mk ok" data-mark="tp1" data-id="${p.id}">TP1 ✓</button>` : ''}<button class="mk ok" data-mark="tp2" data-id="${p.id}">TP2 ✓</button><button class="mk bad" data-mark="sl" data-id="${p.id}">${p.tp1Hit ? 'BE' : 'SL ✗'}</button>` : ''}<button class="x" data-close-pos="${p.id}">${p.status === 'pending' ? 'Cancel' : 'Close'}</button></td></tr>`;
+      return `<tr><td>${p.code ? `<small class="tcode">${esc(p.code)}</small> ` : ''}${esc(p.symbol)} <small style="color:var(--dim)">${p.tf}</small>${p.auto ? ' <small class="autotag">AUTO</small>' : ''}</td><td class="${p.dir === 'long' ? 'up' : 'down'}">${p.dir === 'long' ? 'BUY' : 'SELL'}</td><td>${p.status === 'pending' ? esc(p.type) : p.tp1Hit ? 'Open · TP1 ✓' : 'Open'}</td><td>${fmt(p.entry, p.prec)}</td><td>${fmt(p.sl, p.prec)}</td><td>${fmt(p.tp1, p.prec)}</td><td>${fmt(p.tp2, p.prec)}</td><td>${fmtSize(p, p.remaining)}</td><td>${px != null ? fmt(px, p.prec) : '…'}</td>${(() => { const pp = p.status === 'open' && px != null ? pipsOpen(p, px) : null; return `<td class="${pp == null ? '' : pp >= 0 ? 'up' : 'down'}">${pp == null ? '—' : fmtPips(pp)}</td>`; })()}<td class="${pl >= 0 ? 'up' : 'down'}">${money(pl, p.cur)}</td><td class="acts">${p.status === 'open' ? `${!p.tp1Hit ? `<button class="mk ok" data-mark="tp1" data-id="${p.id}">TP1 ✓</button>` : ''}<button class="mk ok" data-mark="tp2" data-id="${p.id}">TP2 ✓</button><button class="mk bad" data-mark="sl" data-id="${p.id}">${p.tp1Hit ? 'BE' : 'SL ✗'}</button>` : ''}<button class="x" data-close-pos="${p.id}">${p.status === 'pending' ? 'Cancel' : 'Close'}</button></td></tr>`;
     }).join('');
   } else {
     renderHistory(v, d, t);
@@ -1305,7 +1331,6 @@ function wire() {
   };
   $('#symbolInput').onfocus = () => { if (!S.searchHits) doSearch(''); };
   $('#lvlBox').onclick = e => { if (e.target.closest('[data-lb-close]')) { S.lvlHidden = true; renderLvlBox(); } };
-  $('.chart-tabs').onclick = e => { const b = e.target.closest('button'); if (b) setView(b.dataset.view); };
 
   // account
   $('#acctSeg').onclick = e => { const b = e.target.closest('button'); if (b) setActive(b.dataset.acc); };
@@ -1323,6 +1348,8 @@ function wire() {
   $('#riskInput').value = S.settings.riskPct;
   $('#riskInput').oninput = e => { S.settings.riskPct = Math.max(0.1, Math.min(10, +e.target.value || 1)); saveSettings(); if (S.analysis) renderResult(S.analysis); };
   $('#btnAnalyse').onclick = runAnalysis;
+  $('#btnBacktest').onclick = runBacktest;
+  $('#btModal').addEventListener('click', e => { if (e.target.closest('#btUseHigh')) { S.settings.pro.mode = 'highwin'; S.settings.pro.enabled = true; saveSettings(); $('#proMode').value = 'highwin'; $('#proOn').checked = true; $('#btModal').classList.add('hidden'); toast('High win-rate mode on'); if (S.analysis) { S.setups.forEach(x => x.grade = gradeOf(x, S.analysis)); renderResult(S.analysis); } } });
 
   // auto settings
   const A = S.settings.auto;
@@ -1339,6 +1366,7 @@ function wire() {
   $('#autoTake').onchange = e => { A.autoTake = e.target.value; saveSettings(); };
   $('#autoConf').oninput = e => { A.minConf = Math.max(1, Math.min(95, +e.target.value || 60)); saveSettings(); };
   const P = S.settings.pro;
+  $('#proMode').value = P.mode; $('#proMode').onchange = e => { P.mode = e.target.value; saveSettings(); toast(P.mode === 'highwin' ? 'High win-rate mode: fewer, stricter trades' : 'Balanced mode'); };
   $('#proOn').checked = P.enabled; $('#proRR').value = P.minRR; $('#proDaily').value = P.dailyPct; $('#proStreak').value = P.streak;
   const reGrade = () => { if (S.setups.length && S.analysis) { S.setups.forEach(s => s.grade = gradeOf(s, S.analysis)); renderResult(S.analysis); } };
   $('#proOn').onchange = e => { P.enabled = e.target.checked; saveSettings(); reGrade(); };
@@ -1421,11 +1449,13 @@ function drawPositions(force = true) {
   chartItems().forEach(p => {
     const side = p.dir === 'long' ? 'BUY' : 'SELL', A = p.acc === 'real' ? 'REAL' : 'DEMO';
     const pl = px != null && p.status === 'open' ? plOf(p, px) : null;
-    const lbl = p.status === 'pending' ? `${A} ${p.type}` : `${A} ${side} ${(+p.remaining).toPrecision(3)}${pl != null ? `  ${fmtPips(pipsOpen(p, px))}  ${pl >= 0 ? '+' : ''}${money(pl, p.cur)}` : ''}`;
+    const code = p.code || '#PQ';
+    const lbl = p.status === 'pending' ? `${code} ${p.type}` : `${code} ${side} ENTRY${pl != null ? ` · ${fmtPips(pipsOpen(p, px))} pips` : ''}`;
     add(p.entry, p.status === 'pending' ? '#8892a4' : '#4ea8ff', lbl, p.status === 'pending' ? 2 : 0, 2);
-    add(p.sl, '#ff4d6d', p.tp1Hit ? 'SL (BE)' : 'SL', 0, 1);
-    if (!p.tp1Hit) add(p.tp1, '#19e3a2', 'TP1', 2, 1);
+    add(p.sl, '#ff4d6d', p.tp1Hit ? 'SL · BE' : 'SL', 0, 2);
+    add(p.tp1, '#19e3a2', p.tp1Hit ? 'TP1 ✓' : 'TP1', 2, 1);
     add(p.tp2, '#19e3a2', 'TP2', 2, 1);
+    if (p.tp3 && (p.tp3 - p.tp2) * (p.dir === 'long' ? 1 : -1) > 0) add(p.tp3, '#19e3a2', 'TP3', 2, 1);
   });
   drawBoxes();
 }
@@ -1449,7 +1479,7 @@ function drawBoxesInner() {
   items.forEach(p => {
     let x = ts.timeToCoordinate(barAtOrBefore(Math.floor((p.opened || p.created) / 1000)));
     x = Math.max(0, Math.min(x ?? 0, w - 24));
-    html += box(x, p.entry, p.tp2, 'win') + box(x, p.entry, p.sl, 'loss');
+    html += box(x, p.entry, p.tp3 && (p.tp3 - p.tp2) * (p.dir === 'long' ? 1 : -1) > 0 ? p.tp3 : p.tp2, 'win') + box(x, p.entry, p.sl0 ?? p.sl, 'loss');
   });
   const s = S.setups[S.selected];
   if (s && !items.some(p => p.sigId && p.sigId === s.sigId)) {
@@ -1584,7 +1614,7 @@ function drawTvPositions() {
     items.forEach(p => {
       const t0 = barAtOrBefore(Math.floor((p.opened || p.created) / 1000)) || lastT;
       const side = p.dir === 'long' ? 'BUY' : 'SELL';
-      const label = `${p.acc === 'real' ? 'REAL' : 'DEMO'} ${p.status === 'pending' ? p.type : side} ${(+p.remaining).toPrecision(3)} @ ${fmt(p.entry, p.prec)}${p.tp1Hit ? ' · TP1 ✓ SL→BE' : ''}`;
+      const label = `${p.code || ''} ${p.status === 'pending' ? p.type : side + ' ENTRY'} ${fmt(p.entry, p.prec)} · ${p.acc === 'real' ? 'REAL' : 'DEMO'}${p.tp1Hit ? ' · TP1 ✓ SL→BE' : ''}`;
       box(p.dir, t0, p.entry, p.sl === p.entry ? p.sl0 ?? p.sl : p.sl, p.tp2, label);
       if (!p.tp1Hit) ray(t0, p.tp1, 'TP1', '#19e3a2');
       if (p.tp1Hit) ray(t0, p.sl, 'SL (break-even)', '#ff4d6d', 0);
@@ -1685,7 +1715,7 @@ function calcStats(list) {
     avgHold: holds.length ? holds.reduce((a, b) => a + b, 0) / holds.length : null
   };
 }
-function equitySVG(curve, cur) {
+function equitySVG(curve, cur, fmtFn) {
   if (curve.length < 2) return '<div class="eq-empty">The equity curve appears after your first closed trades.</div>';
   const W = 600, H = 120, P = 6, min = Math.min(...curve), max = Math.max(...curve), rng = (max - min) || 1;
   const X = i => P + i * (W - 2 * P) / (curve.length - 1), Y = v => H - P - (v - min) * (H - 2 * P) / rng;
@@ -1695,7 +1725,7 @@ function equitySVG(curve, cur) {
     <line x1="${P}" x2="${W - P}" y1="${Y(0)}" y2="${Y(0)}" class="eq-zero"/>
     <polygon points="${X(0)},${Y(0)} ${pts} ${X(curve.length - 1)},${Y(0)}" style="fill:${col};opacity:.12"/>
     <polyline points="${pts}" style="fill:none;stroke:${col};stroke-width:2;vector-effect:non-scaling-stroke"/>
-  </svg><div class="eq-foot"><span>Start</span><b class="${last >= 0 ? 'up' : 'down'}">${last >= 0 ? '+' : ''}${money(last, cur)}</b></div>`;
+  </svg><div class="eq-foot"><span>Start</span><b class="${last >= 0 ? 'up' : 'down'}">${fmtFn ? fmtFn(last) : (last >= 0 ? '+' : '') + money(last, cur)}</b></div>`;
 }
 function renderHistory(v, d, t) {
   const panel = $('#histPanel');
@@ -1737,14 +1767,14 @@ function renderHistory(v, d, t) {
   if (!list.length) { t.innerHTML = `<tr><td style="color:var(--dim);padding:18px 8px">No closed ${ACC_LABEL[v].toLowerCase()} trades in this period.</td></tr>`; return; }
   t.innerHTML = '<tr><th>Closed</th><th>Symbol</th><th>Side</th><th>Entry</th><th>Exit</th><th>Size</th><th>Pips</th><th>Hold</th><th>Result</th><th>P/L</th></tr>' + list.slice(0, 300).map(h => {
     const pp = pipsClosed(h);
-    return `<tr><td>${new Date(h.closed).toLocaleString('en-GB', { timeZone: 'Asia/Colombo', day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' })}</td><td>${esc(h.symbol)}</td><td class="${h.dir === 'long' ? 'up' : 'down'}">${h.dir === 'long' ? 'BUY' : 'SELL'}</td><td>${fmt(h.entry, h.prec)}</td><td>${fmt(h.exit, h.prec)}</td><td>${fmtSize(h, h.units)}</td><td class="${pp >= 0 ? 'up' : 'down'}">${fmtPips(pp)}</td><td>${durTxt(h.closed - (h.opened || h.created))}</td><td>${esc(h.reason)}</td><td class="${h.pnl >= 0 ? 'up' : 'down'}">${h.pnl >= 0 ? '+' : ''}${money(h.pnl, h.cur)}</td></tr>`;
+    return `<tr><td>${new Date(h.closed).toLocaleString('en-GB', { timeZone: 'Asia/Colombo', day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' })}</td><td>${h.code ? `<small class="tcode">${esc(h.code)}</small> ` : ''}${esc(h.symbol)}</td><td class="${h.dir === 'long' ? 'up' : 'down'}">${h.dir === 'long' ? 'BUY' : 'SELL'}</td><td>${fmt(h.entry, h.prec)}</td><td>${fmt(h.exit, h.prec)}</td><td>${fmtSize(h, h.units)}</td><td class="${pp >= 0 ? 'up' : 'down'}">${fmtPips(pp)}</td><td>${durTxt(h.closed - (h.opened || h.created))}</td><td>${esc(h.reason)}</td><td class="${h.pnl >= 0 ? 'up' : 'down'}">${h.pnl >= 0 ? '+' : ''}${money(h.pnl, h.cur)}</td></tr>`;
   }).join('');
 }
 function exportCSV() {
   const d = S.accounts[S.acctView], list = periodTrades(d);
   const q = v => `"${String(v ?? '').replace(/"/g, '""')}"`;
-  const rows = [['Opened', 'Closed', 'Account', 'Market', 'Symbol', 'Side', 'Entry', 'Exit', 'Stop loss', 'TP1', 'TP2', 'Size', 'Pips', 'P/L', 'Currency', 'Result', 'Setup']]
-    .concat(list.map(h => [new Date(h.opened || h.created).toISOString(), new Date(h.closed).toISOString(), ACC_LABEL[S.acctView], h.market, h.symbol, h.dir === 'long' ? 'BUY' : 'SELL', h.entry, h.exit, h.sl0 ?? h.sl, h.tp1, h.tp2, h.units, pipsClosed(h).toFixed(1), (+h.pnl).toFixed(2), h.cur, h.reason, h.name]));
+  const rows = [['Trade', 'Opened', 'Closed', 'Account', 'Market', 'Symbol', 'Side', 'Entry', 'Exit', 'Stop loss', 'TP1', 'TP2', 'Size', 'Pips', 'P/L', 'Currency', 'Result', 'Setup']]
+    .concat(list.map(h => [h.code || '', new Date(h.opened || h.created).toISOString(), new Date(h.closed).toISOString(), ACC_LABEL[S.acctView], h.market, h.symbol, h.dir === 'long' ? 'BUY' : 'SELL', h.entry, h.exit, h.sl0 ?? h.sl, h.tp1, h.tp2, h.units, pipsClosed(h).toFixed(1), (+h.pnl).toFixed(2), h.cur, h.reason, h.name]));
   const blob = new Blob(['﻿' + rows.map(r => r.map(q).join(',')).join('\n')], { type: 'text/csv' });
   const a = document.createElement('a'); a.href = URL.createObjectURL(blob);
   a.download = `pryme-${S.acctView}-${S.histPeriod}-${new Date().toISOString().slice(0, 10)}.csv`;
@@ -1790,17 +1820,18 @@ function setupKind(name) {
   return /break/.test(n) ? 'breakout' : /fib|golden/.test(n) ? 'fib' : /pullback|retest|ema/.test(n) ? 'pullback' : /revers|counter|fade|range/.test(n) ? 'reversal' : /trend|continu|market/.test(n) ? 'trend' : 'other';
 }
 // make stops survive normal noise and put TP1 where it gets hit often
-function proAdjust(s) {
-  const P = S.settings.pro; if (!P.enabled || !S.ind) return;
-  const a = S.ind.atr, sg = s.direction === 'long' ? 1 : -1;
+function proAdjust(s, ctx = {}) {
+  const P = S.settings.pro, I = ctx.I || S.ind; if (!P.enabled || !I) return;
+  const a = I.atr, sg = s.direction === 'long' ? 1 : -1;
+  const tp1R = P.mode === 'highwin' ? 0.7 : 1;
   const minSL = P.minSlAtr * a;
   if (Math.abs(s.entry - s.stopLoss) < minSL) { s.stopLoss = s.entry - sg * minSL; s.adjusted = true; }
   const R = Math.abs(s.entry - s.stopLoss);
   const d1 = Math.abs(s.tp1 - s.entry);
-  if (d1 > R * 1.05 || d1 < R * 0.8) { s.tp1 = s.entry + sg * R; s.adjusted = true; }
+  if (d1 > R * tp1R * 1.05 || d1 < R * tp1R * 0.8) { s.tp1 = s.entry + sg * R * tp1R; s.adjusted = true; }
   if ((s.tp2 - s.tp1) * sg <= 0) s.tp2 = s.entry + sg * R * 2;
   if ((s.tp3 - s.tp2) * sg <= 0) s.tp3 = s.entry + sg * R * 3;
-  if (s.adjusted && !/Pro filter/.test(s.reasoning)) s.reasoning = (s.reasoning ? s.reasoning + ' ' : '') + '(Pro filter: stop widened beyond the noise / TP1 set to 1R.)';
+  if (s.adjusted && !/Pro filter/.test(s.reasoning)) s.reasoning = (s.reasoning ? s.reasoning + ' ' : '') + `(Pro filter: stop beyond the noise, TP1 at ${tp1R}R → half closes and SL moves to entry.)`;
 }
 function lossStreak(symbol) {
   const list = S.sigStats.filter(x => x.symbol === symbol).sort((a, b) => b.t - a.t);
@@ -1824,15 +1855,15 @@ function riskGuard(symbol = S.symbol.toUpperCase()) {
   }
   return { block: false, todayPnl };
 }
-function proChecks(s, A) {
-  const P = S.settings.pro, I = S.ind || {}, d = s.direction, long = d === 'long';
+function proChecks(s, A, ctx = {}) {
+  const P = S.settings.pro, I = ctx.I || S.ind || {}, d = s.direction, long = d === 'long', bt = !!ctx.bt;
   const R = Math.abs(s.entry - s.stopLoss), rr = Math.abs(s.tp2 - s.entry) / (R || 1e-9);
   const htf = A.htf?.bias;
-  const news = newsNear(S.market, S.symbol, P.newsMins, P.newsMins);
-  const guard = riskGuard();
-  const kind = setupKind(s.name), kst = S.sigStats.filter(x => x.symbol === S.symbol.toUpperCase() && setupKind(x.name) === kind);
+  const news = bt ? [] : newsNear(S.market, S.symbol, P.newsMins, P.newsMins);
+  const guard = bt ? { block: false } : riskGuard();
+  const kind = setupKind(s.name), kst = bt ? [] : S.sigStats.filter(x => x.symbol === S.symbol.toUpperCase() && setupKind(x.name) === kind);
   const kWin = kst.length ? kst.filter(x => x.win).length / kst.length : 1;
-  const utcH = new Date().getUTCHours() + new Date().getUTCMinutes() / 60, wd = new Date().getUTCDay();
+  const nowD = new Date(ctx.t || Date.now()), utcH = nowD.getUTCHours() + nowD.getUTCMinutes() / 60, wd = nowD.getUTCDay();
   const fxClosed = S.market === 'forex' && (wd === 6 || (wd === 0 && utcH < 22) || (wd === 5 && utcH >= 21));
   const rollover = S.market === 'forex' && utcH >= 20.9 && utcH < 22.5;
   const checks = [
@@ -1847,7 +1878,154 @@ function proChecks(s, A) {
     { label: guard.block ? 'Paused' : 'No loss streak', ok: !guard.block, hard: guard.block, tip: guard.why || 'Pauses after a loss streak or the daily loss limit' },
     { label: kst.length >= 4 ? `${kind} ${Math.round(kWin * 100)}% here` : `${kind} setup`, ok: kst.length < 4 || kWin >= 0.35, tip: 'This kind of setup has worked on this symbol before' }
   ];
+  if (P.mode === 'highwin') {
+    const h2 = A.htf2?.bias, type = orderTypeOf(s, I.price, I.atr), isLimit = /LIMIT/.test(type);
+    const cf = bt ? I.conf1 : I.conf2;
+    const lv = long ? (I.sup || []).map(x => x.p).concat([I.ema20, I.ema50]) : (I.res || []).map(x => x.p).concat([I.ema20, I.ema50]);
+    const atLevel = lv.some(v => v && Math.abs(s.entry - v) <= 0.5 * I.atr);
+    const ext = Math.abs((isLimit ? s.entry : I.price) - (I.ema20 || I.price)) / (I.atr || 1);
+    checks.push(
+      { label: h2 ? `2nd HTF ${h2}` : '2nd HTF', ok: !h2 || (long ? h2 !== 'bearish' : h2 !== 'bullish'), hard: true, tip: 'Both higher timeframes must agree' },
+      isLimit
+        ? { label: atLevel ? 'At key level' : 'Not at a level', ok: atLevel, tip: 'Limit entries only at support/resistance or EMA20/50' }
+        : { label: cf && (long ? cf.bull : cf.bear) ? 'Confirmed candle' : 'No confirmation', ok: !!(cf && (long ? cf.bull : cf.bear)), tip: 'Last closed candle must confirm the direction (engulfing / rejection / strong close)' },
+      { label: `${ext.toFixed(1)} ATR from EMA20`, ok: ext <= 1.2, tip: 'Do not chase extended moves' },
+      { label: S.market === 'forex' ? (utcH >= 7 && utcH < 20 ? 'London/NY' : 'Asian session') : 'Session', ok: S.market !== 'forex' || (utcH >= 7 && utcH < 20), tip: 'Forex & gold: only London and New York hours (12:30–01:30 Sri Lanka time)' }
+    );
+  }
   return checks;
+}
+
+/* ================================================================
+   BACKTEST — how would Pryme's rules have done on this chart?
+   Walks forward through real past candles (no peeking ahead), builds the quant setups,
+   runs the same Pro checklist, then simulates entry → TP1 (half + SL to entry) → TP2 / SL.
+   ================================================================ */
+async function runBacktest() {
+  const box = $('#btBody'); $('#btModal').classList.remove('hidden');
+  box.innerHTML = '<div class="gate-loading"><span class="spin"></span></div><p class="fine" style="text-align:center">Testing on past candles…</p>';
+  const market = S.market, sym = S.symbol, tf = S.tf;
+  try {
+    const [main, h1, h2] = await Promise.all([
+      fetchCandles(market, sym, tf, 1000),
+      HTF[tf] ? fetchCandles(market, sym, HTF[tf], 1000).catch(() => null) : null,
+      HTF2[tf] ? fetchCandles(market, sym, HTF2[tf], 1000).catch(() => null) : null
+    ]);
+    const cs = main.candles || [];
+    if (cs.length < 320) throw new Error('Not enough history for a backtest on this symbol/timeframe.');
+    const tfs = TF_SEC[tf];
+    const biasFn = (arr, sec) => {
+      const cache = new Map(); arr = arr || [];
+      return t => {
+        let j = -1; for (let k = arr.length - 1; k >= 0; k--) if (arr[k].time + sec <= t) { j = k; break; }
+        if (j < 80) return null;
+        if (!cache.has(j)) { const I = analyseIndicators(arr.slice(Math.max(0, j - 299), j + 1)); cache.set(j, { bias: I.score > 15 ? 'bullish' : I.score < -15 ? 'bearish' : 'neutral' }); }
+        return cache.get(j);
+      };
+    };
+    const b1 = biasFn(h1?.candles, TF_SEC[HTF[tf]] || 0), b2 = biasFn(h2?.candles, TF_SEC[HTF2[tf]] || 0);
+    // indicators at each closed bar (computed once, used by both modes)
+    const IS = [];
+    for (let i = 250; i < cs.length - 2; i++) { const I = analyseIndicators(cs.slice(Math.max(0, i - 399), i + 1)); IS[i] = I; }
+    const P = S.settings.pro, saved = { ...P };
+    const results = {};
+    for (const mode of ['balanced', 'highwin']) {
+      Object.assign(P, saved, { enabled: true, mode });
+      const trades = []; let busy = 0;
+      for (let i = 250; i < cs.length - 2; i++) {
+        if (i < busy) continue;
+        const I = IS[i]; if (!I || !I.atr) continue;
+        const t = (cs[i].time + tfs) * 1000;
+        const htf = b1(cs[i].time + tfs), htf2 = b2(cs[i].time + tfs);
+        const q = quantSetups(I, htf?.bias);
+        const A = { bias: q.bias, htf, htf2 };
+        const cands = q.setups.map(x => ({ ...x }));
+        cands.forEach(x => { proAdjust(x, { I }); x.grade = gradeOf(x, A, { I, t, bt: true }); });
+        const s = cands.filter(x => x.ok).sort((a, b) => (b.grade === 'A+') - (a.grade === 'A+') || b.confidence - a.confidence)[0];
+        if (!s) continue;
+        const r = simulate(cs, i, s, I);
+        if (!r) continue;
+        trades.push(r); busy = r.exitIdx + 1;
+      }
+      results[mode] = btStats(trades, cs, tfs);
+    }
+    Object.assign(P, saved);
+    const days = ((cs[cs.length - 1].time - cs[250].time) / 86400).toFixed(1);
+    box.innerHTML = btHTML(results, sym, tf, days);
+  } catch (e) {
+    box.innerHTML = `<p class="ai-status err">Backtest failed: ${esc(e.message)}</p>`;
+  }
+}
+// entry at the next bar; pending orders wait up to 8 bars; SL is checked first inside a bar (conservative)
+function simulate(cs, i, s, I) {
+  const sg = s.direction === 'long' ? 1 : -1;
+  const type = orderTypeOf(s, I.price, I.atr);
+  let k = i + 1, entry = s.entry;
+  if (type.startsWith('MARKET')) {
+    entry = cs[k].open;
+    if ((entry - s.stopLoss) * sg <= 0) return null;
+  } else {
+    let filled = false;
+    for (; k < Math.min(cs.length, i + 9); k++) {
+      const c = cs[k];
+      if ((type === 'BUY LIMIT' && c.low <= entry) || (type === 'SELL LIMIT' && c.high >= entry) || (type === 'BUY STOP' && c.high >= entry) || (type === 'SELL STOP' && c.low <= entry)) { filled = true; break; }
+    }
+    if (!filled) return null;
+  }
+  const R = Math.abs(entry - s.stopLoss);
+  const tp1R = Math.abs(s.tp1 - entry) / R, tp2R = Math.abs(s.tp2 - entry) / R;
+  let sl = s.stopLoss, tp1Hit = false;
+  for (let j = k; j < Math.min(cs.length, k + 300); j++) {
+    const c = cs[j];
+    const hitSL = sg > 0 ? c.low <= sl : c.high >= sl;
+    if (hitSL && !(tp1Hit && j === k)) return { win: tp1Hit, R: tp1Hit ? 0.5 * tp1R : -1, exitIdx: j, dir: s.direction, name: s.name, t: c.time };
+    if (!tp1Hit && (sg > 0 ? c.high >= s.tp1 : c.low <= s.tp1)) { tp1Hit = true; sl = entry; }
+    if (tp1Hit && (sg > 0 ? c.high >= s.tp2 : c.low <= s.tp2)) return { win: true, R: 0.5 * tp1R + 0.5 * tp2R, exitIdx: j, dir: s.direction, name: s.name, t: c.time };
+  }
+  return null; // still open at the end of the data
+}
+function btStats(tr, cs, tfs) {
+  const n = tr.length, w = tr.filter(x => x.win).length;
+  const gp = tr.filter(x => x.R > 0).reduce((a, x) => a + x.R, 0), gl = -tr.filter(x => x.R < 0).reduce((a, x) => a + x.R, 0);
+  let streak = 0, maxL = 0; tr.forEach(x => { streak = x.win ? 0 : streak + 1; maxL = Math.max(maxL, streak); });
+  let eq = 0; const curve = [0]; tr.forEach(x => { eq += x.R; curve.push(eq); });
+  return { n, w, wr: n ? w / n * 100 : null, netR: gp - gl, pf: gl ? gp / gl : gp ? Infinity : null, avgR: n ? (gp - gl) / n : null, maxL, curve };
+}
+function btHTML(r, sym, tf, days) {
+  const B = r.balanced, H = r.highwin;
+  const cell = (x, f) => x.n ? f(x) : '—';
+  const row = (lbl, f, cls) => `<tr><td>${lbl}</td><td class="${cls ? cls(B) : ''}">${cell(B, f)}</td><td class="${cls ? cls(H) : ''}">${cell(H, f)}</td></tr>`;
+  const better = H.n && B.n && H.wr > B.wr;
+  return `<p class="fine" style="margin:0 0 10px">${esc(sym.toUpperCase())} · ${tf} · last ${days} days of real candles · Pryme quant engine + Pro checklist (AI setups are not included — they can't be replayed).</p>
+  <div class="table-wrap"><table class="bt-table"><tr><th></th><th>Balanced</th><th>High win-rate</th></tr>
+    ${row('Trades', x => x.n)}
+    ${row('Win rate (TP1 before SL)', x => x.wr.toFixed(0) + '%', x => x.wr >= 50 ? 'up' : 'down')}
+    ${row('Wins / losses', x => `${x.w} / ${x.n - x.w}`)}
+    ${row('Net result', x => (x.netR >= 0 ? '+' : '') + x.netR.toFixed(1) + 'R', x => x.netR >= 0 ? 'up' : 'down')}
+    ${row('Avg per trade', x => (x.avgR >= 0 ? '+' : '') + x.avgR.toFixed(2) + 'R', x => x.avgR >= 0 ? 'up' : 'down')}
+    ${row('Profit factor', x => x.pf === Infinity ? '∞' : x.pf.toFixed(2), x => x.pf >= 1 ? 'up' : 'down')}
+    ${row('Longest losing streak', x => x.maxL)}
+  </table></div>
+  <div class="eq-wrap"><div class="eq-head">Equity in R <small>High win-rate mode</small></div>${equitySVG(H.curve, 'R', v => (v >= 0 ? '+' : '') + v.toFixed(1) + 'R')}</div>
+  <p class="fine">1R = the amount you risk per trade (your risk % of balance). ${H.n < 15 ? 'Few trades — test a lower timeframe or another symbol for a bigger sample.' : ''} ${better ? 'High win-rate mode had the better win rate here.' : ''} Past results don't guarantee future results.</p>
+  <div class="wc-actions"><button class="ghost" data-close>Close</button><button class="primary" id="btUseHigh">Use High win-rate mode</button></div>`;
+}
+
+// trade codes like #PQ001 (shown on the chart, tables and history)
+function nextTradeCode() { const n = (store.get('pa_seq', 0) || 0) + 1; store.set('pa_seq', n); return '#PQ' + String(n).padStart(3, '0'); }
+
+// TradingView-style legend: "BTCUSDT · 15 · BINANCE  O … H … L … C … change"
+const TF_LABEL = { '1m': '1', '5m': '5', '15m': '15', '30m': '30', '1h': '1H', '4h': '4H', '1d': '1D' };
+function tvLegend(time) {
+  const el = $('#tvLegend'); if (!el || !S.candles.length) return;
+  S.legendHover = !!time;
+  const cs = S.candles; let i = cs.length - 1;
+  if (time) { const k = cs.findIndex(c => c.time === time); if (k >= 0) i = k; }
+  const c = cs[i], prev = cs[i - 1] || c, ch = c.close - prev.close, pct = prev.close ? ch / prev.close * 100 : 0, cls = c.close >= c.open ? 'up' : 'down';
+  const ex = (S.meta?.tv || '').split(':')[0] || S.market.toUpperCase();
+  el.innerHTML = `<div class="tvl-1"><b>${esc(S.symbol.toUpperCase())}</b> · ${TF_LABEL[S.tf] || S.tf} · ${esc(ex)} <i class="tvl-dot"></i>
+    <span class="${cls}">O<em>${fmt(c.open)}</em> H<em>${fmt(c.high)}</em> L<em>${fmt(c.low)}</em> C<em>${fmt(c.close)}</em> <em>${ch >= 0 ? '+' : ''}${fmt(ch)} (${pct >= 0 ? '+' : ''}${pct.toFixed(2)}%)</em></span></div>
+    <div class="tvl-2">Vol <em class="${cls}">${(c.volume || 0).toLocaleString('en-US', { maximumFractionDigits: 2 })}</em> <span class="e20">EMA 20</span> <span class="e50">EMA 50</span> <span class="e200">EMA 200</span></div>`;
 }
 
 /* ---------------- boot ---------------- */
