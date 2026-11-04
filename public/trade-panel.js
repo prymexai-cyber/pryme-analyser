@@ -115,13 +115,12 @@
     const margin = entry * units * f / (LEV[S.market] || 1);
     const st = stats();
     if (!real && margin > acc[cur] + st.pl[cur] - st.margin[cur]) return toast('Not enough free margin for this size');
-    if (real && !confirm(`Track a REAL ${dir === 'long' ? 'BUY' : 'SELL'} ${lot} ${unitName(S.market)} ${S.symbol.toUpperCase()} at ${fmt(entry)}?\n\nPlace the same order at your broker — Pryme only tracks it.`)) return;
     const s = { direction: dir, name: 'Manual', tp3: null };
     const pos = createPosition(S.settings.active, s, { entry, sl, tp1: null, tp2: tp, units, market: true });
     pos.entry = entry; pos.manual = true; pos.lot = lot; pos.sl0 = sl;
     saveAccounts();
     addLog(`${real ? 'Real' : 'Demo'} manual ${dir === 'long' ? 'BUY' : 'SELL'} ${lot} ${unitName(S.market)} ${pos.symbol} @ ${fmt(entry)}${sl != null ? ' · SL ' + fmt(sl) : ''}${tp != null ? ' · TP ' + fmt(tp) : ''}`);
-    toast(`${dir === 'long' ? 'BUY' : 'SELL'} ${lot} ${unitName(S.market)} @ ${fmt(entry)}`);
+    toast(`${real ? 'REAL tracked: ' : ''}${dir === 'long' ? 'BUY' : 'SELL'} ${lot} ${unitName(S.market)} @ ${fmt(entry)}${real ? ' — place the same order at your broker' : ''}`, real ? 4500 : 2600);
     try { drawPositions(); renderLvlBox(); renderAccounts(); renderAcctCard(); } catch { }
     tpTab = 'pos'; renderTradePanel();
   }
@@ -157,10 +156,36 @@
   /* keep it live */
   let last = 0;
   const prevTick = onTick;
-  onTick = function (c) { prevTick(c); if (Date.now() - last > 400) { last = Date.now(); renderTradePanel(); } };
+  onTick = function (c) { prevTick(c); try { if (Date.now() - last > 400) { last = Date.now(); renderTradePanel(); renderQuote(); } } catch (e) { console.warn('panel', e); } };
   const prevAcc = renderAccounts;
   renderAccounts = function () { prevAcc.apply(this, arguments); renderTradePanel(); };
   const prevLoad = loadMarket;
   loadMarket = async function () { $('#tpLot').value = ''; S._lotKey = null; const r = await prevLoad.apply(this, arguments); renderTradePanel(); return r; };
-  renderTradePanel();
+  /* TradingView-style live quote on the chart: SELL / BUY boxes + candle countdown */
+  const area = $('.chart-area');
+  area.insertAdjacentHTML('beforeend', `<div class="tv-quote" id="tvQuote"><button class="q-sell" data-q="short"><b id="qBid">—</b><small>SELL</small></button><span class="q-sp" id="qSp">—</span><button class="q-buy" data-q="long"><b id="qAsk">—</b><small>BUY</small></button></div><div class="bar-cd" id="barCd"></div>`);
+  $('#tvQuote').addEventListener('click', e => { const b = e.target.closest('[data-q]'); if (b) place(b.dataset.q); });
+  window.renderQuote = function renderQuote() {
+    const px = mid(); if (px == null) return;
+    const sp = spreadFor(S.market, S.symbol, px);
+    $('#qBid').textContent = fmt(px - sp / 2); $('#qAsk').textContent = fmt(px + sp / 2);
+    const pip = pipSizeFor(S.market, S.symbol, px);
+    $('#qSp').textContent = (sp / pip).toFixed(sp / pip < 10 ? 1 : 0);
+  };
+  function countdown() {
+    const cd = $('#barCd'), cs = S.candles;
+    if (!cs.length || $('#chart').classList.contains('hidden')) { cd.style.display = 'none'; return; }
+    const last = cs[cs.length - 1], end = last.time + (TF_SEC[S.tf] || 900), left = Math.max(0, end - Math.floor(Date.now() / 1000));
+    const y = candleS.priceToCoordinate(last.close);
+    if (y == null || !isFinite(y)) { cd.style.display = 'none'; return; }
+    const h = Math.floor(left / 3600), m = Math.floor(left % 3600 / 60), s2 = left % 60, pad = v => String(v).padStart(2, '0');
+    cd.textContent = (h ? pad(h) + ':' : '') + pad(m) + ':' + pad(s2);
+    cd.style.display = 'block'; cd.style.top = (y + 11) + 'px';
+    cd.style.left = ($('#chart').clientWidth - chart.priceScale('right').width()) + 'px';
+    cd.style.width = chart.priceScale('right').width() + 'px';
+    cd.className = 'bar-cd ' + (last.close >= last.open ? 'up' : 'down');
+  }
+  setInterval(() => { try { countdown(); renderQuote(); } catch { } }, 1000);
+  window.PrymeTrade = { place };
+  renderTradePanel(); renderQuote();
 })();
