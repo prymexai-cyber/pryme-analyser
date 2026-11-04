@@ -6,22 +6,29 @@
 'use strict';
 (() => {
   const isPhone = () => window.matchMedia('(max-width: 760px)').matches;
+  // page title in the top bar (desktop shows it next to the sidebar)
+  const tb = $('.topbar'); if (tb && !$('#pageTitle')) tb.insertAdjacentHTML('afterbegin', '<div class="page-title" id="pageTitle">Home</div>');
 
   /* ---------- tabs ---------- */
+  const TABS = ['home', 'signals', 'live', 'account', 'user'];
+  const TITLES = { home: 'Home', signals: 'AI Signals', live: 'Live Charts', account: 'Account', user: 'User' };
   function setTab(tab) {
+    if (tab === 'trades') tab = 'account';
+    if (!TABS.includes(tab)) tab = 'home';
     document.body.dataset.tab = tab;
+    const pt = $('#pageTitle'); if (pt) pt.textContent = TITLES[tab];
     try { sessionStorage.setItem('pq_tab', tab); } catch { }
     $$('#bottomNav [data-tab]').forEach(b => b.classList.toggle('on', b.dataset.tab === tab));
-    if (tab === 'live') { try { setView('pryme'); setAcctTab('open'); } catch { } }
-    if (tab === 'trades') { try { renderAccounts(); } catch { } }
-    if (tab === 'account') syncMe();
+    if (tab === 'live') { try { setView(); renderTradePanel(); } catch { } }
+    if (tab === 'account') { try { renderAccounts(); } catch { } }
+    if (tab === 'user') syncMe();
     window.scrollTo({ top: 0, behavior: 'instant' in window ? 'instant' : 'auto' });
     // let the chart re-measure after its box changed size
     setTimeout(() => { try { window.dispatchEvent(new Event('resize')); drawBoxes(); } catch { } }, 60);
   }
   $('#bottomNav').addEventListener('click', e => { const b = e.target.closest('[data-tab]'); if (b) setTab(b.dataset.tab); });
   let start = 'home'; try { start = new URLSearchParams(location.search).get('tab') || sessionStorage.getItem('pq_tab') || 'home'; } catch { }
-  if (!['home', 'signals', 'live', 'trades', 'account'].includes(start)) start = 'home';
+
   setTab(start);
 
   // jump to Live after taking a trade on a phone
@@ -47,7 +54,7 @@
     $('#meSignIn').classList.toggle('hidden', $('#pmSignIn').classList.contains('hidden'));
     $('#meSignOut').classList.toggle('hidden', $('#pmSignOut').classList.contains('hidden'));
   }
-  setInterval(() => { if (document.body.dataset.tab === 'account') syncMe(); }, 1500);
+  setInterval(() => { if (document.body.dataset.tab === 'user') syncMe(); }, 1500);
   $('.me-card').addEventListener('click', e => {
     const b = e.target.closest('[data-me]'); if (!b) return;
     const act = b.dataset.me;
