@@ -462,6 +462,14 @@ app.get('/api/search', async (req, res) => {
 });
 
 /* ---------- ECONOMIC CALENDAR (high-impact news filter) ---------- */
+// Crypto Fear & Greed index (free, alternative.me) — used by the sentiment method
+app.get('/api/sentiment', async (_, res) => {
+  try {
+    const j = await cached('fng', 30 * 60 * 1000, () => fetchJSON('https://api.alternative.me/fng/?limit=1', {}, 8000));
+    const d = j?.data?.[0]; res.json({ value: d ? +d.value : null, label: d?.value_classification || null });
+  } catch (e) { res.json({ value: null, error: e.message }); }
+});
+
 app.get('/api/calendar', async (_, res) => {
   try {
     const rows = await cached('ffcal', 60 * 60 * 1000, () => fetchJSON('https://nfs.faireconomy.media/ff_calendar_thisweek.json', {}, 12000));
