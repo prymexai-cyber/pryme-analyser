@@ -20,7 +20,8 @@
     setTimeout(() => { try { window.dispatchEvent(new Event('resize')); drawBoxes(); } catch { } }, 60);
   }
   $('#bottomNav').addEventListener('click', e => { const b = e.target.closest('[data-tab]'); if (b) setTab(b.dataset.tab); });
-  let start = 'home'; try { start = sessionStorage.getItem('pq_tab') || 'home'; } catch { }
+  let start = 'home'; try { start = new URLSearchParams(location.search).get('tab') || sessionStorage.getItem('pq_tab') || 'home'; } catch { }
+  if (!['home', 'signals', 'live', 'trades', 'account'].includes(start)) start = 'home';
   setTab(start);
 
   // jump to Live after taking a trade on a phone
