@@ -216,6 +216,7 @@ function analyseIndicators(cs) {
     };
   };
   out.conf1 = conf(n - 1); out.conf2 = conf(n - 2);
+  out.zones = instZones(cs, out, sw, a);
   out.score = scoreOf(out);
   return out;
 }
@@ -232,6 +233,123 @@ function scoreOf(I) {
   if (I.divergence?.startsWith('Bullish')) s += 10; if (I.divergence?.startsWith('Bearish')) s -= 10;
   I.patterns.forEach(x => { if (x.startsWith('Bullish')) s += 6; if (x.startsWith('Bearish')) s -= 6; });
   return Math.max(-100, Math.min(100, Math.round(s)));
+}
+
+/* ================================================================
+   INSTITUTIONAL LIMIT-ENTRY ENGINE
+   Finds where professional / smart-money traders place limit orders and scores the
+   overlap ("confluence") of: order blocks · fair value gaps (50%) · OTE fib 0.618–0.786 ·
+   liquidity sweeps of equal highs/lows · previous-day high/low · session VWAP ·
+   volume point of control · support/resistance · premium/discount of the dealing range.
+   ================================================================ */
+function instZones(cs, I, sw, a) {
+  const n = cs.length, price = cs[n - 1].close, cand = [];
+  const add = (side, lo, hi, tag, w = 1) => { if (!(hi >= lo)) [lo, hi] = [hi, lo]; if (hi - lo < a * 0.15) { const m = (lo + hi) / 2; lo = m - a * 0.1; hi = m + a * 0.1; } cand.push({ side, lo, hi, tag, w }); };
+  // 1) order blocks: last opposite candle before an impulsive move that broke structure
+  const from = Math.max(12, n - 150);
+  for (let i = from; i < n - 4; i++) {
+    const c = cs[i], prevHi = Math.max(...cs.slice(i - 10, i).map(x => x.high)), prevLo = Math.min(...cs.slice(i - 10, i).map(x => x.low));
+    const up = cs[i + 3].close - c.close, dn = c.close - cs[i + 3].close;
+    const after = cs.slice(i + 1);
+    if (c.close < c.open && up > a * 1.5 && Math.max(...cs.slice(i + 1, i + 4).map(x => x.close)) > prevHi && !after.slice(3).some(x => x.close < c.low)) add('long', c.low, Math.max(c.open, c.close), 'Order block', 1.4);
+    if (c.close > c.open && dn > a * 1.5 && Math.min(...cs.slice(i + 1, i + 4).map(x => x.close)) < prevLo && !after.slice(3).some(x => x.close > c.high)) add('short', Math.min(c.open, c.close), c.high, 'Order block', 1.4);
+  }
+  // 2) fair value gaps (unfilled) — institutions fill to ~50%
+  (I.fvg || []).forEach(g => add(g.type === 'bull' ? 'long' : 'short', g.bot, g.top, 'FVG 50%', 1.2));
+  // 3) OTE zone of the last impulse
+  // OTE for both sides: retracement of the latest up-leg (for buys) and down-leg (for sells)
+  const leg = cs.slice(-80);
+  const iLo = leg.reduce((m, x, k) => x.low < leg[m].low ? k : m, 0), iHi = leg.reduce((m, x, k) => x.high > leg[m].high ? k : m, 0);
+  const upHi = Math.max(...leg.slice(iLo).map(x => x.high)), upLo = leg[iLo].low, dnLo = Math.min(...leg.slice(iHi).map(x => x.low)), dnHi = leg[iHi].high;
+  if (upHi - upLo > a * 3) add('long', upHi - (upHi - upLo) * 0.786, upHi - (upHi - upLo) * 0.618, 'OTE 0.618–0.786', 1.2);
+  if (dnHi - dnLo > a * 3) add('short', dnLo + (dnHi - dnLo) * 0.618, dnLo + (dnHi - dnLo) * 0.786, 'OTE 0.618–0.786', 1.2);
+  // dynamic support / resistance (trend pullbacks)
+  [[I.ema20, 'EMA20', 0.6], [I.ema50, 'EMA50', 0.8]].forEach(([v, t, w]) => { if (v) add(v < price ? 'long' : 'short', v - a * 0.2, v + a * 0.2, t, w); });
+  // 4) liquidity: equal highs/lows and sweeps
+  const eqh = [], eql = [];
+  const hs = sw.hi.slice(-12), ls = sw.lo.slice(-12);
+  for (let i = 0; i < hs.length; i++) for (let j = i + 1; j < hs.length; j++) if (Math.abs(hs[i].p - hs[j].p) < a * 0.2) eqh.push(Math.max(hs[i].p, hs[j].p));
+  for (let i = 0; i < ls.length; i++) for (let j = i + 1; j < ls.length; j++) if (Math.abs(ls[i].p - ls[j].p) < a * 0.2) eql.push(Math.min(ls[i].p, ls[j].p));
+  const recent = cs.slice(-25);
+  let sweepLong = null, sweepShort = null;
+  ls.forEach(l => { if (recent.some(x => x.low < l.p - a * 0.05) && recent[recent.length - 1].close > l.p) sweepLong = l.p; });
+  hs.forEach(h => { if (recent.some(x => x.high > h.p + a * 0.05) && recent[recent.length - 1].close < h.p) sweepShort = h.p; });
+  if (sweepLong) add('long', sweepLong - a * 0.1, sweepLong + a * 0.4, 'Liquidity sweep', 1.5);
+  if (sweepShort) add('short', sweepShort - a * 0.4, sweepShort + a * 0.1, 'Liquidity sweep', 1.5);
+  // 5) previous day high / low (intraday charts)
+  const day = t => Math.floor(t / 86400), today = day(cs[n - 1].time);
+  const yd = cs.filter(x => day(x.time) === today - 1 || (day(x.time) < today && day(x.time) >= today - 3 && !cs.some(y => day(y.time) === today - 1)));
+  let pdh = null, pdl = null;
+  if (yd.length) {
+    pdh = Math.max(...yd.map(x => x.high)); pdl = Math.min(...yd.map(x => x.low));
+    // role reversal: a broken PDH becomes support, a broken PDL becomes resistance
+    add(pdl < price ? 'long' : 'short', pdl - a * 0.15, pdl + a * 0.15, pdl < price ? 'Prev-day low' : 'PDL flip', 1);
+    add(pdh < price ? 'long' : 'short', pdh - a * 0.15, pdh + a * 0.15, pdh < price ? 'PDH flip' : 'Prev-day high', 1);
+  }
+  // 6) session VWAP (today)
+  const td = cs.filter(x => day(x.time) === today);
+  let vwap = null;
+  if (td.length >= 3) { let pv = 0, v = 0; td.forEach(x => { const w = x.volume || 1; pv += (x.high + x.low + x.close) / 3 * w; v += w; }); vwap = pv / v; add(vwap < price ? 'long' : 'short', vwap - a * 0.15, vwap + a * 0.15, 'VWAP', 0.9); }
+  // 7) volume point of control (last 200 bars)
+  const win = cs.slice(-200), lo = Math.min(...win.map(x => x.low)), hi = Math.max(...win.map(x => x.high)), bins = new Array(40).fill(0), bw = (hi - lo) / 40 || 1;
+  win.forEach(x => { const k = Math.min(39, Math.max(0, Math.floor(((x.high + x.low + x.close) / 3 - lo) / bw))); bins[k] += x.volume || 1; });
+  const poc = lo + (bins.indexOf(Math.max(...bins)) + 0.5) * bw;
+  add(poc < price ? 'long' : 'short', poc - bw / 2, poc + bw / 2, 'Volume POC', 0.9);
+  // 8) support / resistance
+  (I.sup || []).forEach(l => add('long', l.p - a * 0.15, l.p + a * 0.15, `Support ×${l.n}`, 0.7 + 0.15 * Math.min(l.n, 4)));
+  (I.res || []).forEach(l => add('short', l.p - a * 0.15, l.p + a * 0.15, `Resistance ×${l.n}`, 0.7 + 0.15 * Math.min(l.n, 4)));
+  // dealing range → premium / discount
+  const rng = cs.slice(-100), rH = Math.max(...rng.map(x => x.high)), rL = Math.min(...rng.map(x => x.low)), eq = (rH + rL) / 2;
+  I.keys = { pdh, pdl, vwap, poc, eq, rangeHigh: rH, rangeLow: rL, eqh: [...new Set(eqh)].slice(-3), eql: [...new Set(eql)].slice(-3), sweepLong, sweepShort };
+  // merge overlapping candidates into confluence zones
+  const zones = [];
+  ['long', 'short'].forEach(side => {
+    const list = cand.filter(c => c.side === side && (side === 'long' ? c.hi < price - a * 0.2 : c.lo > price + a * 0.2) && Math.abs((c.lo + c.hi) / 2 - price) < a * 6);
+    list.sort((x, y) => side === 'long' ? y.hi - x.hi : x.lo - y.lo);
+    const used = new Set();
+    list.forEach((c, i) => {
+      if (used.has(i)) return;
+      const grp = [c]; used.add(i);
+      list.forEach((d, j) => { if (!used.has(j) && d.lo <= c.hi + a * 0.3 && d.hi >= c.lo - a * 0.3) { grp.push(d); used.add(j); } });
+      const tags = [...new Set(grp.map(g => g.tag.replace(/ ×\d+/, '')))];
+      const zlo = Math.min(...grp.map(g => g.lo)), zhi = Math.max(...grp.map(g => g.hi));
+      // premium / discount of the current dealing leg (ICT): buy below 50% of the up-leg, sell above 50% of the down-leg
+      const eqL = upHi - upLo > a * 3 ? (upHi + upLo) / 2 : eq, eqS = dnHi - dnLo > a * 3 ? (dnHi + dnLo) / 2 : eq;
+      const inDisc = side === 'long' ? (zlo + zhi) / 2 < eqL : (zlo + zhi) / 2 > eqS;
+      const sweep = tags.includes('Liquidity sweep');
+      let score = grp.reduce((t, g) => t + g.w, 0) / 1.2 + (inDisc ? 1 : -1) + (sweep ? 0.5 : 0);
+      // proximal half: buy the upper half of a demand zone, sell the lower half of a supply zone
+      const entry = side === 'long' ? zhi - (zhi - zlo) * 0.35 : zlo + (zhi - zlo) * 0.35;
+      zones.push({ side, lo: zlo, hi: zhi, entry, tags: grp.map(g => g.tag).filter((t, k, arr) => arr.indexOf(t) === k), kinds: tags.length, score: +score.toFixed(2), sweep, premiumDiscount: inDisc });
+    });
+  });
+  return zones.filter(z => z.kinds >= 2 || z.sweep).sort((x, y) => y.score - x.score).slice(0, 8);
+}
+// turn the best confluence zones into BUY / SELL LIMIT setups
+function limitSetups(I, dir) {
+  const a = I.atr, out = [];
+  (I.zones || []).forEach(z => {
+    if (dir === 'long' && z.side !== 'long') return;
+    if (dir === 'short' && z.side !== 'short') return;
+    if (!z.premiumDiscount && !z.sweep && z.kinds < 3) return; // longs in discount, shorts in premium (or very strong confluence)
+    const long = z.side === 'long', sg = long ? 1 : -1;
+    // stop beyond the zone and the swing that built it
+    const swingBeyond = long ? Math.min(z.lo, ...(I.sup || []).filter(l => l.p < z.lo && l.p > z.lo - a * 1.2).map(l => l.p)) : Math.max(z.hi, ...(I.res || []).filter(l => l.p > z.hi && l.p < z.hi + a * 1.2).map(l => l.p));
+    const sl = swingBeyond - sg * a * 0.3;
+    const R = Math.abs(z.entry - sl);
+    // targets at opposing liquidity
+    const K = I.keys || {};
+    const opp = (long ? [...(I.res || []).map(l => l.p), K.pdh, ...(K.eqh || []), K.rangeHigh] : [...(I.sup || []).map(l => l.p), K.pdl, ...(K.eql || []), K.rangeLow])
+      .filter(v => v && (v - z.entry) * sg > R * 0.7).sort((x, y) => (x - y) * sg);
+    const tp1 = z.entry + sg * R, tp2 = opp.find(v => (v - z.entry) * sg >= R * 2) ?? z.entry + sg * R * 2.5, tp3 = opp.find(v => (v - tp2) * sg > R * 0.5) ?? z.entry + sg * R * 3.5;
+    out.push({
+      name: `${long ? 'Buy' : 'Sell'} limit · ${z.tags.slice(0, 3).join(' + ')}`, direction: z.side,
+      entry: z.entry, stopLoss: sl, tp1, tp2, tp3, zone: { lo: z.lo, hi: z.hi },
+      confidence: Math.min(85, Math.round(50 + z.score * 5)),
+      reasoning: `Institutional limit zone ${fmt(z.lo)}–${fmt(z.hi)} with ${z.kinds} confluences (${z.tags.join(', ')})${z.sweep ? ', liquidity already swept' : ''}, in ${long ? 'discount' : 'premium'}. Stop beyond the zone and its swing; targets at the next liquidity.`
+    });
+  });
+  return out.slice(0, 2);
 }
 
 /* ---------------- quant baseline setups ---------------- */
@@ -265,7 +383,8 @@ function quantSetups(I, htfBias) {
     const s1 = I.sup[0]?.p ?? I.lo20;
     out.push(mk('Breakdown sell below support', 'short', s1 - a * 0.15, clampSL(s1 - a * 0.15, s1 + a * 0.9, 'short'), { conf: 48, why: 'Stop order catches a breakdown with momentum.' }));
   }
-  return { bias: dir === 'long' ? 'BULLISH' : dir === 'short' ? 'BEARISH' : 'NEUTRAL', score, setups: out.slice(0, 4) };
+  const lim = limitSetups(I, dir);
+  return { bias: dir === 'long' ? 'BULLISH' : dir === 'short' ? 'BEARISH' : 'NEUTRAL', score, setups: lim.concat(out.filter(o => !lim.some(l => l.direction === o.direction && Math.abs(l.entry - o.entry) < a * 0.4))).slice(0, 4) };
 }
 
 /* ---------------- sizing ---------------- */
@@ -674,6 +793,8 @@ function buildPrompt(I, htf, quant) {
     resistances: I.res.map(x => ({ price: r(x.p), touches: x.n })), supports: I.sup.map(x => ({ price: r(x.p), touches: x.n })),
     fibonacci: I.fib && { impulse: I.fib.dir, high: r(I.fib.hi), low: r(I.fib.lo), f50: r(I.fib.f5), f618: r(I.fib.f618), f786: r(I.fib.f786) },
     unfilledFVGs: I.fvg.map(g => ({ type: g.type, top: r(g.top), bottom: r(g.bot) })),
+    institutionalLimitZones: (I.zones || []).slice(0, 6).map(z => ({ side: z.side, from: r(z.lo), to: r(z.hi), entry: r(z.entry), confluence: z.tags, score: z.score, liquiditySweep: z.sweep })),
+    keyLevels: I.keys && { prevDayHigh: r(I.keys.pdh), prevDayLow: r(I.keys.pdl), sessionVWAP: r(I.keys.vwap), volumePOC: r(I.keys.poc), rangeEquilibrium: r(I.keys.eq), premiumOrDiscount: I.price > I.keys.eq ? 'premium' : 'discount', equalHighs: (I.keys.eqh || []).map(r), equalLows: (I.keys.eql || []).map(r) },
     lastCandlePatterns: I.patterns, volumeVsAvg: I.volRatio && +I.volRatio.toFixed(2),
     higherTimeframe: htf, secondHigherTimeframe: S.lastHtf2 || undefined, cseQuote: S.meta.quote || undefined,
     quantEngine: { score: quant.score, bias: quant.bias, candidateSetups: quant.setups.map(s => ({ name: s.name, direction: s.direction, entry: r(s.entry), stopLoss: r(s.stopLoss), tp1: r(s.tp1), tp2: r(s.tp2), tp3: r(s.tp3) })) },
@@ -697,6 +818,7 @@ Rules:
 - Entries must be within ~3 ATR of current price. Use the candidate setups from the quant engine as a starting point but improve them with structure, liquidity and news.
 - confidence = honest probability (0-100) that TP1 is hit before SL.
 - WIN-RATE FIRST: quality over quantity. Rank the best setup first. Prefer entries at a level where liquidity was already swept or price is in discount (longs) / premium (shorts), aligned with the higher timeframe. Counter-trend ideas must get confidence below 50.
+- LIMIT ENTRIES LIKE INSTITUTIONAL TRADERS: prefer BUY/SELL LIMIT orders inside the institutionalLimitZones (order block, fair value gap 50%, OTE 0.618–0.786, liquidity sweep reclaim, previous-day high/low, VWAP, volume POC). Longs only in discount, shorts only in premium of the dealing range. Entry at the zone's proximal half, stop beyond the zone AND the swing that formed it, TP1 at the first opposing liquidity, TP2 at the next liquidity pool (equal highs/lows, PDH/PDL).
 - Put stops beyond the liquidity (beyond the swing + at least 0.3 ATR buffer) and NEVER closer than 1.3 × ATR from entry — tight stops inside the noise are the #1 cause of losses. Never at an obvious round number. TP1 about 1R (before the nearest opposing level) so it gets hit often; TP2 at least 2R.
 - ${S.settings.pro.mode === 'highwin' ? 'HIGH WIN-RATE MODE: only setups where BOTH higher timeframes agree, entered at a key level (limit) or after a confirmation candle close (market). TP1 about 0.7R. Fewer trades is fine — 0 good trades is better than 3 bad ones (return 1 conservative limit setup if nothing qualifies).' : ''}
 - Trend-following only when the higher timeframe agrees. If ADX < 18 (choppy), prefer limit entries at range extremes only. Avoid entries 45 minutes around high-impact news listed in upcomingNews.
@@ -1485,6 +1607,7 @@ function drawBoxesInner() {
   if (s && !items.some(p => p.sigId && p.sigId === s.sigId)) {
     const x = Math.max(0, w - 110);
     html += box(x, s.entry, s.tp2, 'win prev') + box(x, s.entry, s.stopLoss, 'loss prev');
+    if (s.zone) { const zx = Math.max(0, w - 260); html += box(zx, s.zone.lo, s.zone.hi, 'zone'); const yz = candleS.priceToCoordinate(s.zone.hi); if (yz != null) html += `<div class="zone-tag" style="left:${zx + 4}px;top:${yz - 16}px">LIMIT ZONE</div>`; }
   }
   layer.innerHTML = html;
 }
@@ -1882,7 +2005,7 @@ function proChecks(s, A, ctx = {}) {
     const h2 = A.htf2?.bias, type = orderTypeOf(s, I.price, I.atr), isLimit = /LIMIT/.test(type);
     const cf = bt ? I.conf1 : I.conf2;
     const lv = long ? (I.sup || []).map(x => x.p).concat([I.ema20, I.ema50]) : (I.res || []).map(x => x.p).concat([I.ema20, I.ema50]);
-    const atLevel = lv.some(v => v && Math.abs(s.entry - v) <= 0.5 * I.atr);
+    const atLevel = lv.some(v => v && Math.abs(s.entry - v) <= 0.5 * I.atr) || (I.zones || []).some(z => z.side === d && s.entry >= z.lo - 0.3 * I.atr && s.entry <= z.hi + 0.3 * I.atr);
     const ext = Math.abs((isLimit ? s.entry : I.price) - (I.ema20 || I.price)) / (I.atr || 1);
     checks.push(
       { label: h2 ? `2nd HTF ${h2}` : '2nd HTF', ok: !h2 || (long ? h2 !== 'bearish' : h2 !== 'bullish'), hard: true, tip: 'Both higher timeframes must agree' },
