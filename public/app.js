@@ -800,6 +800,7 @@ function buildPrompt(I, htf, quant) {
     quantEngine: { score: quant.score, bias: quant.bias, candidateSetups: quant.setups.map(s => ({ name: s.name, direction: s.direction, entry: r(s.entry), stopLoss: r(s.stopLoss), tp1: r(s.tp1), tp2: r(s.tp2), tp3: r(s.tp3) })) },
     todaysHeadlines: S.news.slice(0, 8).map(n => n.title),
     recentSignalResultsOnThisSymbol: perfFor(S.symbol.toUpperCase()),
+    fullAnalysis29Methods: S.deep ? S.deep.forAI : undefined,
     upcomingNews: newsNear(S.market, S.symbol, 6 * 60).map(e => `${e.cur} ${e.title} (${e.impact}) in ${Math.round((e.t - Date.now()) / 60000)} min`),
     account: { wallet: sz, balance: bal, currency: cur, riskPerTradePct: S.settings.riskPct }
   };
@@ -819,6 +820,7 @@ Rules:
 - confidence = honest probability (0-100) that TP1 is hit before SL.
 - WIN-RATE FIRST: quality over quantity. Rank the best setup first. Prefer entries at a level where liquidity was already swept or price is in discount (longs) / premium (shorts), aligned with the higher timeframe. Counter-trend ideas must get confidence below 50.
 - LIMIT ENTRIES LIKE INSTITUTIONAL TRADERS: prefer BUY/SELL LIMIT orders inside the institutionalLimitZones (order block, fair value gap 50%, OTE 0.618–0.786, liquidity sweep reclaim, previous-day high/low, VWAP, volume POC). Longs only in discount, shorts only in premium of the dealing range. Entry at the zone's proximal half, stop beyond the zone AND the swing that formed it, TP1 at the first opposing liquidity, TP2 at the next liquidity pool (equal highs/lows, PDH/PDL).
+- Use fullAnalysis29Methods: only give TRADE-quality setups in the direction most methods agree on; if they disagree, say the market has no clear edge and give at most 1 conservative limit setup.
 - Put stops beyond the liquidity (beyond the swing + at least 0.3 ATR buffer) and NEVER closer than 1.3 × ATR from entry — tight stops inside the noise are the #1 cause of losses. Never at an obvious round number. TP1 about 1R (before the nearest opposing level) so it gets hit often; TP2 at least 2R.
 - ${S.settings.pro.mode === 'highwin' ? 'HIGH WIN-RATE MODE: only setups where BOTH higher timeframes agree, entered at a key level (limit) or after a confirmation candle close (market). TP1 about 0.7R. Fewer trades is fine — 0 good trades is better than 3 bad ones (return 1 conservative limit setup if nothing qualifies).' : ''}
 - Trend-following only when the higher timeframe agrees. If ADX < 18 (choppy), prefer limit entries at range extremes only. Avoid entries 45 minutes around high-impact news listed in upcomingNews.
@@ -855,6 +857,8 @@ async function runAnalysis() {
     S.ind = analyseIndicators(S.candles);
     const [htf, htf2] = await Promise.all([htfInfo(HTF[S.tf]), htfInfo(HTF2[S.tf])]);
     S.lastHtf2 = htf2;
+    st.textContent = 'Running the full 29-method analysis…';
+    try { await loadCalendar(); S.deep = await deepAnalysis(htf, htf2); } catch (e) { console.warn('deep analysis failed', e); S.deep = null; }
     const quant = quantSetups(S.ind, htf?.bias);
     const keys = S.settings.keys.filter(k => k.enabled !== false && k.key);
     let result = null, by = 'Pryme quant engine (add an AI key for full AI analysis)';
@@ -887,6 +891,7 @@ async function runAnalysis() {
     S.setups.sort((a, b) => ((b.ok ? 1 : 0) - (a.ok ? 1 : 0)) || (RANK[b.grade] - RANK[a.grade]) || (b.confidence - a.confidence));
     newSignalBatch();
     renderResult(S.analysis);
+    try { renderDeep(); } catch { }
     if (setups.length) drawSetupLines(0);
     if (!st.classList.contains('err')) st.textContent = `Done · ${new Date().toLocaleTimeString('en-GB', { timeZone: 'Asia/Colombo' })} Colombo time`;
   } catch (e) {
@@ -1227,7 +1232,7 @@ function closePart(pos, price, units, reason) {
   drawPositions();
   if (['tp1', 'tp2', 'sl'].includes(kind)) notify(`Pryme ${ACC_LABEL[pos.acc]}: ${pos.symbol} ${reason}`, `${pnl >= 0 ? '+' : ''}${money(pnl, pos.cur)}`);
   const A = S.settings.auto;
-  if ((kind === 'tp1' && A.trigger === 'tp1') || ((kind === 'tp2' || kind === 'be') && A.trigger === 'tp2') || (kind === 'sl' && A.onSL))
+  if (!pos.manual && ((kind === 'tp1' && A.trigger === 'tp1') || ((kind === 'tp2' || kind === 'be') && A.trigger === 'tp2') || (kind === 'sl' && A.onSL)))
     requestNext(pos.batch, pos.market, pos.symbol, pos.tf, `${ACC_LABEL[pos.acc]} ${pos.symbol} ${reason}`);
 }
 function processPosition(pos, candles, live = false) {
@@ -1245,11 +1250,11 @@ function processPosition(pos, candles, live = false) {
     if (pos.status !== 'open') break;
     const tol = tolFor(pos.market, c.close);
     // before TP1: SL with allowance. After TP1 (stop at entry): needs a clear move back through entry.
-    const hitSL = pos.tp1Hit ? (sg > 0 ? c.low <= pos.sl - tol : c.high >= pos.sl + tol) : (sg > 0 ? c.low <= pos.sl + tol : c.high >= pos.sl - tol);
+    const hitSL = pos.sl == null ? false : pos.tp1Hit ? (sg > 0 ? c.low <= pos.sl - tol : c.high >= pos.sl + tol) : (sg > 0 ? c.low <= pos.sl + tol : c.high >= pos.sl - tol);
     // after TP1 the stop is at entry; don't judge it on the same candle that hit TP1
     if (hitSL && (live || !(pos.tp1Hit && c.time <= (pos.tp1At ?? 0)))) { closePart(pos, pos.sl, pos.remaining, pos.tp1Hit ? 'Break-even stop' : 'Stop loss hit'); break; }
-    if (!pos.tp1Hit && (sg > 0 ? c.high >= pos.tp1 - tol : c.low <= pos.tp1 + tol)) { pos.tp1Hit = true; pos.tp1At = c.time; closePart(pos, pos.tp1, pos.units / 2, 'TP1 hit (half closed, SL → entry)'); pos.sl = pos.entry; }
-    if (pos.status === 'open' && (sg > 0 ? c.high >= pos.tp2 - tol : c.low <= pos.tp2 + tol)) { closePart(pos, pos.tp2, pos.remaining, 'TP2 hit'); break; }
+    if (!pos.tp1Hit && pos.tp1 != null && (sg > 0 ? c.high >= pos.tp1 - tol : c.low <= pos.tp1 + tol)) { pos.tp1Hit = true; pos.tp1At = c.time; closePart(pos, pos.tp1, pos.units / 2, 'TP1 hit (half closed, SL → entry)'); pos.sl = pos.entry; }
+    if (pos.status === 'open' && pos.tp2 != null && (sg > 0 ? c.high >= pos.tp2 - tol : c.low <= pos.tp2 + tol)) { closePart(pos, pos.tp2, pos.remaining, 'TP2 hit'); break; }
   }
   if (candles.length && !live) pos.lastBar = Math.max(pos.lastBar ?? 0, candles[candles.length - 1].time);
 }
@@ -1567,7 +1572,7 @@ function drawPositions(force = true) {
   const now = Date.now(); if (!force && now - lastPosDraw < 700) return; lastPosDraw = now;
   posLines.forEach(l => { try { candleS.removePriceLine(l); } catch { } }); posLines = [];
   const px = S.candles.length ? S.candles[S.candles.length - 1].close : null;
-  const add = (price, color, title, style = 0, w = 2) => posLines.push(candleS.createPriceLine({ price, color, lineWidth: w, lineStyle: style, axisLabelVisible: true, title }));
+  const add = (price, color, title, style = 0, w = 2) => { if (price == null || !isFinite(price)) return; posLines.push(candleS.createPriceLine({ price, color, lineWidth: w, lineStyle: style, axisLabelVisible: true, title })); };
   chartItems().forEach(p => {
     const side = p.dir === 'long' ? 'BUY' : 'SELL', A = p.acc === 'real' ? 'REAL' : 'DEMO';
     const pl = px != null && p.status === 'open' ? plOf(p, px) : null;
@@ -1576,7 +1581,7 @@ function drawPositions(force = true) {
     add(p.entry, p.status === 'pending' ? '#8892a4' : '#4ea8ff', lbl, p.status === 'pending' ? 2 : 0, 2);
     add(p.sl, '#ff4d6d', p.tp1Hit ? 'SL · BE' : 'SL', 0, 2);
     add(p.tp1, '#19e3a2', p.tp1Hit ? 'TP1 ✓' : 'TP1', 2, 1);
-    add(p.tp2, '#19e3a2', 'TP2', 2, 1);
+    add(p.tp2, '#19e3a2', p.manual ? 'TP' : 'TP2', 2, 1);
     if (p.tp3 && (p.tp3 - p.tp2) * (p.dir === 'long' ? 1 : -1) > 0) add(p.tp3, '#19e3a2', 'TP3', 2, 1);
   });
   drawBoxes();
@@ -1593,7 +1598,8 @@ function drawBoxesInner() {
   const ts = chart.timeScale(), y = v => candleS.priceToCoordinate(v);
   const w = $('#chart').clientWidth - chart.priceScale('right').width();
   const box = (x, a, b, cls) => {
-    const ya = y(a), yb = y(b); if (ya == null || yb == null) return '';
+    if (a == null || b == null || !isFinite(a) || !isFinite(b)) return '';
+    const ya = y(a), yb = y(b); if (ya == null || yb == null || !isFinite(ya) || !isFinite(yb)) return '';
     return `<div class="pbox ${cls}" style="left:${x}px;top:${Math.min(ya, yb)}px;width:${Math.max(0, w - x)}px;height:${Math.abs(ya - yb)}px"></div>`;
   };
   let html = '';
@@ -1725,6 +1731,7 @@ function drawTvPositions() {
   const scale = 10 ** (S.prec ?? 2), tfs = TF_SEC[S.tf] || 900;
   const lastT = S.candles.length ? S.candles[S.candles.length - 1].time : nowSec();
   const box = (dir, t0, entry, sl, tp, label) => {
+    if (sl == null || tp == null) { if (label) ray(t0, entry, label, '#4ea8ff', 0); if (sl != null) ray(t0, sl, 'SL', '#ff4d6d', 0); if (tp != null) ray(t0, tp, 'TP', '#19e3a2'); return; }
     const t1 = Math.max(lastT + tfs * 12, t0 + tfs * 20);
     keep(ch.createMultipointShape([{ time: t0, price: entry }, { time: t1, price: entry }], {
       shape: dir === 'long' ? 'long_position' : 'short_position', lock: true, disableUndo: true,
@@ -1732,7 +1739,7 @@ function drawTvPositions() {
     }));
     keep(ch.createShape({ time: t0, price: entry }, { shape: 'horizontal_ray', lock: true, disableUndo: true, overrides: { linecolor: '#4ea8ff', linewidth: 1, showLabel: true, text: label, textcolor: '#4ea8ff', fontsize: 11, horzLabelsAlign: 'right', vertLabelsAlign: 'bottom' } }));
   };
-  const ray = (t0, price, text, color, style = 2) => keep(ch.createShape({ time: t0, price }, { shape: 'horizontal_ray', lock: true, disableUndo: true, overrides: { linecolor: color, linewidth: 1, linestyle: style, showLabel: true, text, textcolor: color, fontsize: 11, horzLabelsAlign: 'right', vertLabelsAlign: 'top' } }));
+  function ray(t0, price, text, color, style = 2) { if (price == null) return; return keep(ch.createShape({ time: t0, price }, { shape: 'horizontal_ray', lock: true, disableUndo: true, overrides: { linecolor: color, linewidth: 1, linestyle: style, showLabel: true, text, textcolor: color, fontsize: 11, horzLabelsAlign: 'right', vertLabelsAlign: 'top' } })); }
   try {
     items.forEach(p => {
       const t0 = barAtOrBefore(Math.floor((p.opened || p.created) / 1000)) || lastT;
@@ -1998,6 +2005,7 @@ function proChecks(s, A, ctx = {}) {
     { label: I.rsi != null ? `RSI ${I.rsi.toFixed(0)}` : 'RSI', ok: I.rsi == null || (long ? I.rsi < 72 : I.rsi > 28), tip: 'Do not buy overbought / sell oversold' },
     { label: news.length ? `News: ${news[0].cur} ${news[0].title}` : 'No big news', ok: !news.length, hard: !!news.length, tip: `No high-impact news ±${P.newsMins} min` },
     { label: fxClosed ? 'Market closed' : rollover ? 'Rollover hour' : 'Good session', ok: !fxClosed && !rollover, hard: fxClosed, tip: 'Avoid the daily rollover (wide spreads) and closed markets' },
+    ...(!bt && S.deep && S.deep.side ? [{ label: `${Math.round(S.deep.agree * 100)}% methods ${S.deep.side === d ? 'agree' : 'disagree'}`, ok: S.deep.side === d && S.deep.agree >= (P.mode === 'highwin' ? 0.65 : 0.55), hard: S.deep.side !== d && S.deep.agree >= 0.7, tip: 'Most of the 29 analysis methods must point the same way' }] : []),
     { label: guard.block ? 'Paused' : 'No loss streak', ok: !guard.block, hard: guard.block, tip: guard.why || 'Pauses after a loss streak or the daily loss limit' },
     { label: kst.length >= 4 ? `${kind} ${Math.round(kWin * 100)}% here` : `${kind} setup`, ok: kst.length < 4 || kWin >= 0.35, tip: 'This kind of setup has worked on this symbol before' }
   ];
@@ -2075,6 +2083,7 @@ async function runBacktest() {
     Object.assign(P, saved);
     const days = ((cs[cs.length - 1].time - cs[250].time) / 86400).toFixed(1);
     box.innerHTML = btHTML(results, sym, tf, days);
+    const H = results.highwin; if (H.n) S.lastBacktest = `${H.wr.toFixed(0)}% win rate, ${H.netR >= 0 ? '+' : ''}${H.netR.toFixed(1)}R over ${H.n} trades`;
   } catch (e) {
     box.innerHTML = `<p class="ai-status err">Backtest failed: ${esc(e.message)}</p>`;
   }
