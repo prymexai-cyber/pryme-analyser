@@ -1,18 +1,32 @@
 {
+  "id": "/",
   "name": "Pryme Quant",
   "short_name": "Pryme Quant",
   "description": "AI chart analysis for Forex, Crypto, CSE and Stocks — entries with SL & TP, demo and real trade tracking.",
-  "id": "/",
+  "lang": "en",
+  "dir": "ltr",
   "start_url": "/?source=app",
   "scope": "/",
   "display": "standalone",
-  "orientation": "portrait",
+  "display_override": ["standalone", "minimal-ui"],
+  "orientation": "any",
   "background_color": "#07090d",
   "theme_color": "#07090d",
-  "categories": ["finance", "productivity"],
+  "categories": ["finance", "productivity", "business"],
+  "prefer_related_applications": false,
+  "related_applications": [],
+  "launch_handler": { "client_mode": "navigate-existing" },
   "icons": [
-    { "src": "/icons/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
-    { "src": "/icons/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any" },
-    { "src": "/icons/maskable-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+    { "src": "/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
+    { "src": "/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any" },
+    { "src": "/maskable-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+  ],
+  "screenshots": [
+    { "src": "/screenshot-mobile.jpg", "sizes": "780x1688", "type": "image/jpeg", "form_factor": "narrow", "label": "Live chart with entry, stop loss and take profits" },
+    { "src": "/screenshot-wide.jpg", "sizes": "1280x720", "type": "image/jpeg", "form_factor": "wide", "label": "Pryme Quant on desktop" }
+  ],
+  "shortcuts": [
+    { "name": "Live trades", "short_name": "Live", "url": "/?tab=live", "icons": [{ "src": "/icon-192.png", "sizes": "192x192", "type": "image/png" }] },
+    { "name": "Signals", "short_name": "Signals", "url": "/?tab=signals", "icons": [{ "src": "/icon-192.png", "sizes": "192x192", "type": "image/png" }] }
   ]
 }
