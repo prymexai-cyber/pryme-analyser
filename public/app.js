@@ -488,6 +488,20 @@ function initChart() {
   const line = c => chart.addLineSeries({ color: c, lineWidth: 1, priceLineVisible: false, lastValueVisible: false, crosshairMarkerVisible: false });
   e20S = line('#2962ff'); e50S = line('#ff9800'); e200S = line('#ab47bc');
   chart.subscribeCrosshairMove(prm => tvLegend(prm && prm.time));
+  // show "Live ⟫" when you scroll away from the latest candles or squash the price axis
+  const btn = $('#goLiveBtn');
+  if (btn) {
+    btn.addEventListener('click', () => goLive());
+    const check = () => {
+      const r = chart.timeScale().getVisibleLogicalRange(), n = S.candles.length;
+      let away = !!(r && n && r.to < n - 2);
+      try { away = away || chart.priceScale('right').options().autoScale === false; } catch { }
+      btn.classList.toggle('hidden', !away);
+    };
+    chart.timeScale().subscribeVisibleLogicalRangeChange(check);
+    el.addEventListener('pointerup', () => setTimeout(check, 50));
+    el.addEventListener('wheel', () => setTimeout(check, 50), { passive: true });
+  }
 }
 function drawSeries() {
   const cs = S.candles; if (!cs.length) return;
@@ -498,6 +512,19 @@ function drawSeries() {
   const I = S.ind;
   const ln = arr => cs.map((c, i) => arr[i] == null ? null : { time: c.time, value: arr[i] }).filter(Boolean);
   e20S.setData(ln(I.series.e20)); e50S.setData(ln(I.series.e50)); e200S.setData(ln(I.series.e200));
+}
+/* Jump to the live candles with a fresh price scale — used on every symbol / timeframe change
+   (if you dragged the price axis on one chart, the next chart would otherwise open on the old price range) */
+function goLive(bars = 150) {
+  if (!chart) return;
+  try {
+    chart.priceScale('right').applyOptions({ autoScale: true });
+    ['vol', 'rsi', 'macd'].forEach(id => { try { chart.priceScale(id).applyOptions({ autoScale: true }); } catch { } });
+    const ts = chart.timeScale(), n = S.candles.length;
+    if (n > bars) ts.setVisibleLogicalRange({ from: n - bars, to: n + 8 }); else ts.fitContent();
+    ts.scrollToRealTime();
+  } catch { }
+  const b = document.getElementById('goLiveBtn'); if (b) b.classList.add('hidden');
 }
 function clearLines() { S.priceLines.forEach(l => { try { candleS.removePriceLine(l); } catch { } }); S.priceLines = []; S.setupMarker = null; updateMarkers(); }
 function drawSetupLines(idx) {
@@ -635,7 +662,9 @@ async function fetchCandles(market, symbol, tf, limit = 500) {
     catch (e) { /* fall back to server below */ }
   }
   if (market === 'forex' && isGold(symbol)) {
-    try { return await goldClientCandles(tf, limit); } catch (e) { /* fall back to server */ }
+    // server builds gold like OANDA:XAUUSD (same session hours + live spot); browser PAXG is the backup
+    try { const d = await getJSON(`/api/candles?market=forex&symbol=XAUUSD&tf=${tf}&limit=${limit}`); if (d.candles?.length) return d; } catch (e) { }
+    return goldClientCandles(tf, limit);
   }
   return getJSON(`/api/candles?market=${market}&symbol=${encodeURIComponent(symbol)}&tf=${tf}&limit=${limit}`);
 }
@@ -672,8 +701,7 @@ async function loadMarket(opts = {}) {
     if (!S.candles.length) throw new Error('No price data returned.');
     S.ind = analyseIndicators(S.candles);
     S.loadedKey = `${S.market}|${S.symbol.toUpperCase()}`;
-    drawSeries(); chart.timeScale().fitContent();
-    if (S.candles.length > 150) chart.timeScale().setVisibleLogicalRange({ from: S.candles.length - 150, to: S.candles.length + 8 });
+    drawSeries(); goLive();
     updateHeader(); renderIndicators(); updateMarkers(); drawPositions(); renderLvlBox(); tvLegend();
     $('#symSub').textContent = [d.name, d.tv || d.symbol, S.market.toUpperCase(), S.tf, d.feed ? 'feed: ' + d.feed : ''].filter(Boolean).join(' · ');
     if (d.priceNote && d.priceNote.startsWith('futures')) { const m = $('#chartMsg'); m.textContent = 'Spot price feed is busy — showing futures prices for now (slightly higher than spot). Chart is set to futures so levels match.'; m.classList.remove('hidden'); }
@@ -740,7 +768,7 @@ function fallbackPoll() {
     fails = 0; setLive(true, label);
     // never let a chart/panel drawing problem stop live prices
     d.candles.slice(-3).forEach(c => { try { onTick(c); } catch (e) { console.warn('tick render', e); } });
-  }, S.market === 'cse' ? 20000 : 12000);
+  }, S.market === 'cse' ? 20000 : S.market === 'forex' && isGold(S.symbol) ? 5000 : 12000);
 }
 function updateHeader() {
   const cs = S.candles; if (!cs.length) return;
