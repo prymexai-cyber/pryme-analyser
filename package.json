@@ -1,7 +1,7 @@
 {
   "name": "pryme-analyser",
   "version": "1.0.0",
-  "description": "Pryme Analyser - AI chart analyser for Forex, Crypto, CSE (Sri Lanka) and international stocks with entry/SL/TP and a demo wallet",
+  "description": "Pryme Quant - AI chart analyser for Forex, Crypto, CSE (Sri Lanka) and international stocks with entry/SL/TP and a demo wallet",
   "main": "server.js",
   "scripts": {
     "start": "node server.js"
