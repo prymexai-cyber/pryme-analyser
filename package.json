@@ -1,16 +1,32 @@
 {
-  "name": "pryme-analyser",
+  "name": "pryme-quant",
+  "productName": "Pryme Quant",
   "version": "1.0.0",
-  "description": "Pryme Quant - AI chart analyser for Forex, Crypto, CSE (Sri Lanka) and international stocks with entry/SL/TP and a demo wallet",
-  "main": "server.js",
+  "description": "Pryme Quant desktop app",
+  "main": "main.js",
+  "author": "Pryme Quant",
+  "license": "MIT",
   "scripts": {
-    "start": "node server.js"
+    "start": "electron .",
+    "dist": "electron-builder --win nsis --x64 --publish never"
   },
-  "engines": {
-    "node": ">=18"
+  "devDependencies": {
+    "electron": "31.7.7",
+    "electron-builder": "24.13.3"
   },
-  "dependencies": {
-    "express": "^4.19.2"
-  },
-  "license": "MIT"
+  "build": {
+    "appId": "com.prymequant.desktop",
+    "productName": "Pryme Quant",
+    "files": ["main.js", "config.json", "icon.png"],
+    "directories": { "output": "dist" },
+    "win": { "target": "nsis", "icon": "icon.png" },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "Pryme Quant",
+      "artifactName": "PrymeQuant-Setup-${version}.exe"
+    }
+  }
 }
