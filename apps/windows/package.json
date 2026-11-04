@@ -1,0 +1,32 @@
+{
+  "name": "pryme-quant",
+  "productName": "Pryme Quant",
+  "version": "1.0.0",
+  "description": "Pryme Quant desktop app",
+  "main": "main.js",
+  "author": "Pryme Quant",
+  "license": "MIT",
+  "scripts": {
+    "start": "electron .",
+    "dist": "electron-builder --win nsis --x64 --publish never"
+  },
+  "devDependencies": {
+    "electron": "31.7.7",
+    "electron-builder": "24.13.3"
+  },
+  "build": {
+    "appId": "com.prymequant.desktop",
+    "productName": "Pryme Quant",
+    "files": ["main.js", "config.json", "icon.png"],
+    "directories": { "output": "dist" },
+    "win": { "target": "nsis", "icon": "icon.png" },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "Pryme Quant",
+      "artifactName": "PrymeQuant-Setup-${version}.exe"
+    }
+  }
+}
