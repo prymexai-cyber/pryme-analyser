@@ -7,7 +7,7 @@
    ============================================================ */
 'use strict';
 (() => {
-  const SYNC_KEYS = ['pa_settings', 'pa_accounts', 'pa_signals', 'pa_sigstats', 'pa_batch', 'pa_log', 'pa_events', 'pa_profile', 'pa_market', 'pa_tf', 'pa_view'];
+  const SYNC_KEYS = ['pa_settings', 'pa_accounts', 'pa_signals', 'pa_sigstats', 'pa_batch', 'pa_log', 'pa_events', 'pa_profile', 'pa_market', 'pa_tf', 'pa_view', 'pa_view2', 'pa_seq', 'pa_hperiod'];
   const raw = k => { try { return localStorage.getItem(k); } catch { return null; } };
   const put = (k, v) => { try { v == null ? localStorage.removeItem(k) : localStorage.setItem(k, v); } catch { } };
   const device = raw('pa_device') || (() => { const d = Math.random().toString(36).slice(2, 10); put('pa_device', d); return d; })();
@@ -37,7 +37,7 @@
     $('#pmAvatar').innerHTML = avatarHTML(p, 52);
     $('#pmName').textContent = p.name || 'Trader';
     $('#pmEmail').textContent = C.user ? C.user.email : (C.fbReady ? 'Not signed in' : 'Saved on this device only');
-    $('#pmSignIn').classList.toggle('hidden', !!C.user || !C.fbReady);
+    $('#pmSignIn').classList.toggle('hidden', !!C.user); // always offer Google sign-in when signed out
     $('#pmSignOut').classList.toggle('hidden', !C.user);
     const hi = $('#helloName'); if (hi) hi.textContent = p.name ? `Hi, ${p.name.split(' ')[0]}` : '';
   }
@@ -146,7 +146,7 @@
   }
   function hideGate() { $('#gate').classList.add('hidden'); }
   async function signIn() {
-    if (!C.auth) return;
+    if (!C.auth) { $('#loginSetupModal').classList.remove('hidden'); return; } // Firebase keys not added on Render yet
     const prov = new firebase.auth.GoogleAuthProvider();
     prov.setCustomParameters({ prompt: 'select_account' });
     try { await C.auth.signInWithPopup(prov); }
@@ -206,6 +206,7 @@
 
   /* ---------- wiring ---------- */
   function wireUI() {
+    const d = $('#lsDomain'); if (d) d.textContent = location.hostname;
     $('#profileBtn').onclick = e => { e.stopPropagation(); renderProfile(); $('#profileMenu').classList.toggle('hidden'); };
     document.addEventListener('click', e => { if (!e.target.closest('#profileMenu')) $('#profileMenu').classList.add('hidden'); });
     $('#pmEdit').onclick = openProfile;
