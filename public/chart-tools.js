@@ -287,7 +287,7 @@
   drawSeries = function () { origDraw.apply(this, arguments); updateIndicators(); };
   let lastInd = 0;
   const origTick = onTick;
-  onTick = function (c) { origTick(c); if (Date.now() - lastInd > 3000) { lastInd = Date.now(); updateIndicators(); } else render(); };
+  onTick = function (c) { origTick(c); try { if (Date.now() - lastInd > 3000) { lastInd = Date.now(); updateIndicators(); } else render(); } catch (e) { console.warn('indicators', e); } };
   chart.timeScale().subscribeVisibleLogicalRangeChange(render);
   chart.subscribeCrosshairMove(() => { if (pending) return; });
   setInterval(render, 500); // keep overlays aligned when the price scale auto-moves
