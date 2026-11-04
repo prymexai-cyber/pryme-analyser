@@ -62,3 +62,12 @@ settings, AI keys, profile) in **Firebase Firestore** under your Google account.
    Save → Render redeploys. Open the site → **Continue with Google**.
 
 Without these variables Pryme runs in "this device only" mode (no login).
+
+## Android APK + Windows app (free, built on GitHub)
+1. Push this project to GitHub (the `.github/workflows/build-apps.yml` file must be included).
+2. GitHub → your repo → **Actions** → **Build Pryme Quant apps** → **Run workflow** (check the site URL) → **Run**.
+3. Wait ~8–12 minutes. Open the finished run → **Artifacts**:
+   - **PrymeQuant-Android** → `PrymeQuant.apk` (install on the phone) + `assetlinks.json`
+   - **PrymeQuant-Windows** → `PrymeQuant-Setup-1.0.0.exe` (install on Windows)
+4. Copy the contents of `assetlinks.json` into Render → Environment → `ASSETLINKS_JSON` (so the Android app opens full-screen, without a browser bar).
+Both apps load the live website, so every GitHub update reaches them automatically.
