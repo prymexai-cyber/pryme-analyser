@@ -420,6 +420,19 @@ function sizing(setup, market, sym) {
     if (units > maxU) { units = maxU; note = 'Capped to what your balance can buy (no leverage).'; }
   }
   const cs = contractSize(market, sym);
+  // brokers can't open less than their minimum size → round to it and say what the real risk becomes
+  let minNote = '';
+  if (market === 'forex' && cs > 1) {
+    const lots = Math.max(0.01, Math.floor(units / cs * 100) / 100);
+    if (units / cs < 0.01) minNote = `Minimum is 0.01 lot — real risk ${money(dist * cs * 0.01 * f, cur)} (${(dist * cs * 0.01 * f / (bal || 1) * 100).toFixed(1)}% of balance)`;
+    units = lots * cs;
+  } else if (market === 'crypto') {
+    const st = Math.pow(10, Math.floor(Math.log10(100 / (setup.entry || 1))));
+    const u = Math.max(st, Math.floor(units / st) * st);
+    if (units < st) minNote = `Minimum size ${st} — real risk ${money(dist * st * f, cur)}`;
+    units = +u.toFixed(8);
+  } else if (units < 1 && bal >= setup.entry) { units = 1; minNote = 'Minimum 1 share'; }
+  if (minNote) note = (note ? note + ' ' : '') + minNote;
   const notional = units * setup.entry * (market === 'forex' && sym.toUpperCase().startsWith('USD') ? 1 / setup.entry : 1);
   const lev = bal ? notional / bal : 0;
   const pnl = tp => Math.abs(tp - setup.entry) * units * f;
@@ -716,12 +729,17 @@ function fallbackPoll() {
   let fails = 0;
   S.poll = setInterval(async () => {
     if (document.hidden) return;
-    try {
-      const d = await fetchCandles(S.market, S.symbol, S.tf);
-      if (`${S.market}|${S.symbol}|${S.tf}` !== key) return;
-      d.candles.slice(-3).forEach(onTick);
-      fails = 0; setLive(true, label);
-    } catch { if (++fails >= 3) setLive(false, 'RECONNECTING'); }
+    let d;
+    try { d = await fetchCandles(S.market, S.symbol, S.tf); }
+    catch {
+      // browser feed failed → try the server feed before calling it a disconnect
+      try { d = await getJSON(`/api/candles?market=${S.market}&symbol=${encodeURIComponent(S.symbol)}&tf=${S.tf}&limit=500`); } catch { }
+    }
+    if (`${S.market}|${S.symbol}|${S.tf}` !== key) return;
+    if (!d || !d.candles || !d.candles.length) { if (++fails >= 3) setLive(false, 'RECONNECTING'); return; }
+    fails = 0; setLive(true, label);
+    // never let a chart/panel drawing problem stop live prices
+    d.candles.slice(-3).forEach(c => { try { onTick(c); } catch (e) { console.warn('tick render', e); } });
   }, S.market === 'cse' ? 20000 : 12000);
 }
 function updateHeader() {
@@ -1159,12 +1177,8 @@ let pendingTrade = null;
 function openTradeModal(i, accKey) {
   const s = S.setups[i]; if (!s) return;
   const guard = riskGuard();
-  if (guard.block && !confirm(`Trading is paused: ${guard.why}\n\nTake this trade anyway?`)) return;
-  if (s.ok === false) {
-    const why = (s.checks || []).filter(c => !c.ok).map(c => '• ' + c.label).join('\n');
-    if (!confirm(`This setup is WATCH ONLY — it failed:\n${why}\n\nMost losing trades come from setups like this. Take it anyway?`)) return;
-  }
-  pendingTrade = { s, i };
+  const fails = (s.checks || []).filter(c => !c.ok).map(c => c.label);
+  pendingTrade = { s, i, warn: [guard.block ? '⛔ ' + guard.why : '', s.ok === false && fails.length ? '⏸ Watch-only setup — not passed: ' + fails.join(', ') : ''].filter(Boolean).join('<br>') };
   $('#tmAcc').value = accKey || S.settings.active;
   $('#tmEntry').value = +s.entry.toFixed(S.prec); $('#tmSL').value = +s.stopLoss.toFixed(S.prec);
   $('#tmTP1').value = +s.tp1.toFixed(S.prec); $('#tmTP2').value = +s.tp2.toFixed(S.prec);
@@ -1173,7 +1187,7 @@ function openTradeModal(i, accKey) {
 }
 function fillUnits() {
   const s = pendingTrade.s, z = sizingFor($('#tmAcc').value, s, S.market, S.symbol);
-  $('#tmUnits').value = S.market === 'crypto' || S.market === 'forex' ? +z.units.toPrecision(5) : Math.floor(z.units);
+  $('#tmUnits').value = S.market === 'crypto' || S.market === 'forex' ? +z.units.toFixed(6) : Math.floor(z.units);
   updateTmInfo();
 }
 function updateTmInfo() {
@@ -1183,7 +1197,8 @@ function updateTmInfo() {
   const f = quoteFactor(S.market, S.symbol, entry), cur = curOf(S.market), cs = contractSize(S.market, S.symbol);
   $('#tmTitle').textContent = `${ACC_LABEL[acc]} ${pendingTrade.s.direction === 'long' ? 'BUY' : 'SELL'} · ${S.symbol.toUpperCase()}`;
   $('#tmConfirm').textContent = acc === 'real' ? 'Track on Real' : 'Place on Demo';
-  $('#tmInfo').innerHTML = `${ACC_LABEL[acc]} balance: <b>${money(S.accounts[acc][cur], cur)}</b><br>Risk if SL hits: <b class="down">${money(Math.abs(entry - sl) * units * f, cur)}</b><br>Profit TP1 (half) + TP2 (half): <b class="up">${money((Math.abs(tp1 - entry) + Math.abs(tp2 - entry)) * units / 2 * f, cur)}</b>${cs > 1 ? `<br>= ${(units / cs).toFixed(2)} lots` : ''}${acc === 'real' ? '<br><span style="color:var(--gold)">Place this trade at your broker with the same levels. Pryme tracks it live and updates your Real balance estimate.</span>' : ''}`;
+  const W = pendingTrade.warn ? `<div class="tm-warn">${pendingTrade.warn}</div>` : '';
+  $('#tmInfo').innerHTML = W + `${ACC_LABEL[acc]} balance: <b>${money(S.accounts[acc][cur], cur)}</b><br>Risk if SL hits: <b class="down">${money(Math.abs(entry - sl) * units * f, cur)}</b><br>Profit TP1 (half) + TP2 (half): <b class="up">${money((Math.abs(tp1 - entry) + Math.abs(tp2 - entry)) * units / 2 * f, cur)}</b>${cs > 1 ? `<br>= ${(units / cs).toFixed(2)} lots` : ''}${acc === 'real' ? '<br><span style="color:var(--gold)">Place this trade at your broker with the same levels. Pryme tracks it live and updates your Real balance estimate.</span>' : ''}`;
 }
 function placeTrade() {
   const { s } = pendingTrade, acc = $('#tmAcc').value;
@@ -2006,6 +2021,8 @@ function proChecks(s, A, ctx = {}) {
     { label: news.length ? `News: ${news[0].cur} ${news[0].title}` : 'No big news', ok: !news.length, hard: !!news.length, tip: `No high-impact news ±${P.newsMins} min` },
     { label: fxClosed ? 'Market closed' : rollover ? 'Rollover hour' : 'Good session', ok: !fxClosed && !rollover, hard: fxClosed, tip: 'Avoid the daily rollover (wide spreads) and closed markets' },
     ...(!bt && S.deep && S.deep.side ? [{ label: `${Math.round(S.deep.agree * 100)}% methods ${S.deep.side === d ? 'agree' : 'disagree'}`, ok: S.deep.side === d && S.deep.agree >= (P.mode === 'highwin' ? 0.65 : 0.55), hard: S.deep.side !== d && S.deep.agree >= 0.7, tip: 'Most of the 29 analysis methods must point the same way' }] : []),
+    ...(!bt ? (() => { const z = sizing(s, S.market, S.symbol), pct = z.bal ? z.riskAmt / z.bal * 100 : 0, lim = Math.max(3, (+S.settings.riskPct || 1) * 2.5);
+      return [{ label: pct > lim ? `Risk ${pct.toFixed(0)}% of balance` : 'Risk fits balance', ok: pct <= lim, hard: pct > lim, tip: pct > lim ? 'Even the smallest size risks too much of this balance on this stop — use a lower timeframe (5m/15m) for tighter stops, or a bigger balance' : 'The smallest broker size keeps risk within your limit' }]; })() : []),
     { label: guard.block ? 'Paused' : 'No loss streak', ok: !guard.block, hard: guard.block, tip: guard.why || 'Pauses after a loss streak or the daily loss limit' },
     { label: kst.length >= 4 ? `${kind} ${Math.round(kWin * 100)}% here` : `${kind} setup`, ok: kst.length < 4 || kWin >= 0.35, tip: 'This kind of setup has worked on this symbol before' }
   ];
