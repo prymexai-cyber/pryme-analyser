@@ -478,6 +478,15 @@ app.get('/api/diag', async (_, res) => {
   res.json({ region: process.env.RENDER_REGION || 'unknown', goldTicks: goldTicks.length, paused: Object.fromEntries(Object.entries(srcBlock).filter(([, v]) => v > Date.now()).map(([k, v]) => [k, new Date(v).toISOString()])), feeds: out });
 });
 
+function getCandles(market, symbol, tf, fetchLimit = 500) {
+  const gold = market === 'forex' && ['XAUUSD', 'GOLD'].includes(symbol.toUpperCase());
+  const ttl = gold ? 5000 : tf === '1m' ? 8000 : 20000;
+  return cached(`${market}|${symbol.toUpperCase()}|${tf}|${fetchLimit}`, ttl, async () => {
+    if (market === 'crypto') return cryptoCandles(symbol, tf, fetchLimit);
+    if (market === 'cse') return cseCandles(symbol, tf, fetchLimit);
+    return yahooCandles(symbol, market, tf, fetchLimit);
+  });
+}
 app.get('/api/candles', async (req, res) => {
   const market = (req.query.market || 'crypto').toLowerCase();
   const symbol = (req.query.symbol || 'BTCUSDT').trim();
@@ -486,13 +495,7 @@ app.get('/api/candles', async (req, res) => {
   // round the limit up so many different requests share one cached upstream call
   const fetchLimit = limit <= 100 ? 100 : limit <= 500 ? 500 : 1000;
   try {
-    const gold = market === 'forex' && ['XAUUSD', 'GOLD'].includes(symbol.toUpperCase());
-    const ttl = gold ? 5000 : tf === '1m' ? 8000 : 20000;
-    const out = await cached(`${market}|${symbol.toUpperCase()}|${tf}|${fetchLimit}`, ttl, async () => {
-      if (market === 'crypto') return cryptoCandles(symbol, tf, fetchLimit);
-      if (market === 'cse') return cseCandles(symbol, tf, fetchLimit);
-      return yahooCandles(symbol, market, tf, fetchLimit);
-    });
+    const out = await getCandles(market, symbol, tf, fetchLimit);
     res.json({ market, tf, ...out, candles: (out.candles || []).slice(-limit) });
   } catch (e) {
     res.status(502).json({ error: 'Data fetch failed: ' + e.message });
@@ -685,6 +688,144 @@ app.post('/api/ai', async (req, res) => {
   }
   res.status(502).json({ error: 'All AI keys failed', errors });
 });
+
+
+/* ============================================================
+   PRYME AGENT — watches your symbols in the background and sends a
+   push notification to your phone / PC when it finds a clean setup.
+   - Web Push (works when the app is closed on Android, Windows/Mac Chrome & Edge, iPhone home-screen app)
+   - Set VAPID_PUBLIC_KEY + VAPID_PRIVATE_KEY on Render so phones stay subscribed after restarts
+     (GET /api/push/newkeys once to get a pair).
+   - The watch list lives in memory: every time you open Pryme it re-registers automatically.
+   ============================================================ */
+let webpush = null; try { webpush = require('web-push'); } catch (_) { }
+let VAPID = null;
+function vapid() {
+  if (VAPID || !webpush) return VAPID;
+  let pub = process.env.VAPID_PUBLIC_KEY, priv = process.env.VAPID_PRIVATE_KEY, temp = false;
+  if (!pub || !priv) { const k = webpush.generateVAPIDKeys(); pub = k.publicKey; priv = k.privateKey; temp = true; }
+  try { webpush.setVapidDetails(process.env.VAPID_SUBJECT || ('mailto:' + (process.env.CONTACT_EMAIL || 'agent@pryme-quant.app')), pub, priv); }
+  catch (e) { console.warn('VAPID error', e.message); return null; }
+  VAPID = { pub, temp }; return VAPID;
+}
+const agents = new Map(); // id -> registration
+const AG_HTF = { '1m': '15m', '5m': '1h', '15m': '4h', '30m': '4h', '1h': '4h', '4h': '1d', '1d': null };
+const okMarket = m => ['forex', 'crypto', 'cse', 'stock'].includes(m);
+function cleanWatch(w) {
+  return (Array.isArray(w) ? w : []).slice(0, 8).map(x => ({ market: String(x.market || '').toLowerCase(), symbol: String(x.symbol || '').toUpperCase().slice(0, 24), tf: TF_SEC[x.tf] ? x.tf : '1h' }))
+    .filter(x => okMarket(x.market) && x.symbol && x.tf !== '1m');
+}
+app.get('/api/push/key', (_, res) => { const v = vapid(); res.json({ key: v ? v.pub : null, temp: v ? v.temp : true, push: !!v }); });
+app.get('/api/push/newkeys', (_, res) => { if (!webpush) return res.status(500).json({ error: 'web-push not installed' }); res.json(webpush.generateVAPIDKeys()); });
+app.post('/api/agent/register', (req, res) => {
+  const b = req.body || {};
+  const id = String(b.id || '').slice(0, 40); if (!/^[a-z0-9_-]{6,40}$/i.test(id)) return res.status(400).json({ error: 'bad id' });
+  if (!agents.has(id) && agents.size >= 300) return res.status(429).json({ error: 'agent is full' });
+  const old = agents.get(id) || { alerts: [], sent: {} };
+  const keys = (Array.isArray(b.keys) ? b.keys : []).filter(k => k && k.key && PROVIDERS[k.provider]).slice(0, 5).map(k => ({ provider: k.provider, key: String(k.key), model: k.model || '' }));
+  agents.set(id, {
+    ...old, id, enabled: b.enabled !== false, sub: b.sub && b.sub.endpoint ? b.sub : old.sub || null,
+    watch: cleanWatch(b.watch), lang: ['singlish', 'sinhala', 'english'].includes(b.lang) ? b.lang : 'english',
+    minScore: Math.max(55, Math.min(90, +b.minScore || 70)), keys, seen: Date.now(), name: String(b.name || '').slice(0, 30)
+  });
+  ensureScanner();
+  res.json({ ok: true, push: !!(agents.get(id).sub && vapid()), key: vapid()?.pub || null, watching: agents.get(id).watch.length, lastScan: agentScan.at });
+});
+app.get('/api/agent/status', (req, res) => {
+  const a = agents.get(String(req.query.id || ''));
+  res.json({ registered: !!a, push: !!(a && a.sub), watch: a ? a.watch : [], alerts: a ? a.alerts.slice(0, 20) : [], lastScan: agentScan.at, scanning: agentScan.busy, restartedAt: BOOT });
+});
+app.post('/api/agent/test', async (req, res) => {
+  const a = agents.get(String(req.body?.id || ''));
+  if (!a || !a.sub) return res.status(404).json({ error: 'No phone/PC subscribed yet — turn on Agent alerts first.' });
+  try { await sendPush(a, { title: 'Pryme Agent ✓', body: a.lang === 'english' ? 'Notifications work. I will tell you when I find a clean setup.' : 'Notifications hari. Hoda setup ekak hambunama mama kiyannam.', url: '/?tab=agent', tag: 'test' }); res.json({ ok: true }); }
+  catch (e) { res.status(500).json({ error: e.message }); }
+});
+const BOOT = Date.now();
+async function sendPush(a, payload) {
+  if (!a.sub || !vapid()) throw new Error('push not set up');
+  try { await webpush.sendNotification(a.sub, JSON.stringify(payload), { TTL: 3600, urgency: 'high' }); }
+  catch (e) { if (e.statusCode === 404 || e.statusCode === 410) a.sub = null; throw new Error('push failed ' + (e.statusCode || e.message)); }
+}
+
+/* --- the agent's own quick scan (pre-filter; the full 29-method check runs when you open the app) --- */
+function aEma(v, n) { const k = 2 / (n + 1); let e; return v.map((x, i) => (e = i ? x * k + e * (1 - k) : x, i < n - 1 ? null : e)); }
+function aRsi(c, n = 14) { const o = Array(c.length).fill(null); let g = 0, l = 0; for (let i = 1; i < c.length; i++) { const d = c[i] - c[i - 1]; if (i <= n) { g += Math.max(d, 0); l += Math.max(-d, 0); if (i === n) { g /= n; l /= n; o[i] = 100 - 100 / (1 + g / (l || 1e-9)); } } else { g = (g * (n - 1) + Math.max(d, 0)) / n; l = (l * (n - 1) + Math.max(-d, 0)) / n; o[i] = 100 - 100 / (1 + g / (l || 1e-9)); } } return o; }
+function aAtr(cs, n = 14) { const o = []; let a = null; cs.forEach((k, i) => { const tr = i ? Math.max(k.high - k.low, Math.abs(k.high - cs[i - 1].close), Math.abs(k.low - cs[i - 1].close)) : k.high - k.low; a = i < n ? (a == null ? tr : (a * i + tr) / (i + 1)) : (a * (n - 1) + tr) / n; o.push(a); }); return o; }
+function htfTrend(h) {
+  if (!h || h.length < 60) return 0;
+  const c = h.map(x => x.close), e20 = aEma(c, 20), e50 = aEma(c, 50), j = h.length - 1;
+  return e20[j] > e50[j] && c[j] > e50[j] ? 1 : e20[j] < e50[j] && c[j] < e50[j] ? -1 : 0;
+}
+function quickSignal(cs, htf) {
+  if (!cs || cs.length < 220) return null;
+  const c = cs.map(x => x.close), e20 = aEma(c, 20), e50 = aEma(c, 50), e200 = aEma(c, 200), r = aRsi(c), at = aAtr(cs);
+  const i = cs.length - 2, k = cs[i], A = at[i], px = cs[cs.length - 1].close, ht = htfTrend(htf);
+  if (!A || !e200[i]) return null;
+  for (const dir of [1, -1]) {
+    const stack = dir > 0 ? e20[i] > e50[i] && e50[i] > e200[i] && k.close > e200[i] : e20[i] < e50[i] && e50[i] < e200[i] && k.close < e200[i];
+    if (!stack || ht === -dir) continue;
+    const touch = [0, 1, 2, 3].some(d => dir > 0 ? cs[i - d].low <= e20[i - d] + 0.15 * A : cs[i - d].high >= e20[i - d] - 0.15 * A);
+    const body = Math.abs(k.close - k.open), rng = (k.high - k.low) || 1e-9;
+    const confirm = (k.close - k.open) * dir > 0 && (k.close - e20[i]) * dir > 0 && body / rng > 0.35;
+    if (!touch || !confirm) continue;
+    const rsiOk = dir > 0 ? r[i] > 45 && r[i] < 68 : r[i] < 55 && r[i] > 32;
+    const slope = (e50[i] - e50[i - 5]) * dir > 0;
+    const ext = Math.abs(px - e20[i]) / A; // too far from the mean = late
+    if (ext > 1.6) continue;
+    const swing = dir > 0 ? Math.min(...cs.slice(i - 10, i + 1).map(x => x.low)) : Math.max(...cs.slice(i - 10, i + 1).map(x => x.high));
+    let limit = (e20[i] + e50[i]) / 2; if ((px - limit) * dir < 0.2 * A) limit = px - dir * 0.35 * A;
+    const sl = dir > 0 ? Math.min(swing, limit - 1.2 * A) - 0.2 * A : Math.max(swing, limit + 1.2 * A) + 0.2 * A;
+    const R = Math.abs(limit - sl);
+    if ((px - sl) * dir <= 0.3 * A) continue;
+    let score = 50 + (ht === dir ? 15 : 0) + (rsiOk ? 10 : 0) + (body / rng > 0.55 ? 8 : 4) + (slope ? 7 : 0) + (ext < 0.8 ? 6 : 0);
+    score = Math.min(95, score);
+    return { dir: dir > 0 ? 'BUY' : 'SELL', score, grade: score >= 82 ? 'A+' : score >= 70 ? 'A' : 'B', price: px, limit, sl, tp1: limit + dir * R, tp2: limit + dir * 2 * R, tp3: limit + dir * 3 * R, bar: k.time, htf: ht, rsi: r[i] };
+  }
+  return null;
+}
+const nf = v => { const a = Math.abs(v); const d = a >= 1000 ? 2 : a >= 20 ? 3 : 5; return (+v).toFixed(d).replace(/\.?0+$/, m => m.includes('.') ? '' : m); };
+const agentScan = { at: 0, busy: false, timer: null };
+function ensureScanner() { if (!agentScan.timer) { agentScan.timer = setInterval(scanAll, 4 * 60 * 1000); setTimeout(scanAll, 15000); } }
+async function scanAll() {
+  if (agentScan.busy) return;
+  const live = [...agents.values()].filter(a => a.enabled && a.watch.length && Date.now() - a.seen < 7 * 86400e3);
+  if (!live.length) return;
+  agentScan.busy = true;
+  try {
+    const jobs = new Map();
+    live.forEach(a => a.watch.forEach(w => { const k = `${w.market}|${w.symbol}|${w.tf}`; if (!jobs.has(k)) jobs.set(k, { ...w, users: [] }); jobs.get(k).users.push(a); }));
+    for (const [key, j] of jobs) {
+      try {
+        const d = await getCandles(j.market, j.symbol, j.tf, 500);
+        const h = AG_HTF[j.tf] ? (await getCandles(j.market, j.symbol, AG_HTF[j.tf], 500).catch(() => null))?.candles : null;
+        const sig = quickSignal(d.candles, h);
+        if (!sig) continue;
+        for (const a of j.users) {
+          if (sig.score < a.minScore) continue;
+          const sk = `${key}|${sig.dir}`, last = a.sent[sk] || 0;
+          if (sig.bar * 1000 - last < (TF_SEC[j.tf] || 3600) * 6 * 1000) continue; // same idea already sent recently
+          a.sent[sk] = sig.bar * 1000;
+          const why = await agentWhy(a, j, sig).catch(() => '');
+          const title = `🎯 ${j.symbol} ${j.tf.toUpperCase()} · ${sig.dir} (${sig.grade})`;
+          const body = `Limit ${nf(sig.limit)} · Now ${nf(sig.price)} · SL ${nf(sig.sl)} · TP ${nf(sig.tp1)} / ${nf(sig.tp2)}` + (why ? `\n${why}` : '');
+          const alert = { t: Date.now(), market: j.market, symbol: j.symbol, tf: j.tf, ...sig, why, title, body };
+          a.alerts.unshift(alert); a.alerts = a.alerts.slice(0, 30);
+          if (a.sub) sendPush(a, { title, body, url: `/?tab=signals&market=${j.market}&symbol=${encodeURIComponent(j.symbol)}&tf=${j.tf}&go=1`, tag: sk }).catch(e => console.warn('push', e.message));
+        }
+      } catch (e) { console.warn('agent scan', key, e.message); }
+    }
+  } finally { agentScan.busy = false; agentScan.at = Date.now(); }
+}
+async function agentWhy(a, j, sig) {
+  if (!a.keys.length) return '';
+  const lang = { singlish: 'Singlish (Sinhala written in English letters)', sinhala: 'Sinhala (සිංහල script)', english: 'English' }[a.lang];
+  const prompt = `${j.symbol} ${j.tf} ${sig.dir} setup. Price ${nf(sig.price)}, limit ${nf(sig.limit)}, SL ${nf(sig.sl)}, TP1 ${nf(sig.tp1)}. EMA 20/50/200 stacked ${sig.dir === 'BUY' ? 'up' : 'down'}, pullback to EMA20 with a confirmation candle, RSI ${sig.rsi?.toFixed(0)}, higher timeframe ${sig.htf > 0 ? 'up' : sig.htf < 0 ? 'down' : 'flat'}. Write ONE short reason (max 22 words) in ${lang}. Return JSON {"why":"..."}`;
+  for (const k of a.keys) {
+    try { const o = await callAI({ ...k, system: 'You are a concise trading assistant. Reply only with JSON.', prompt }); const m = /\{[\s\S]*\}/.exec(o.text); if (m) return String(JSON.parse(m[0]).why || '').slice(0, 160); } catch (_) { }
+  }
+  return '';
+}
 
 // a missing file (icon, image, script…) must be a real 404 — never the web page, or app stores reject the icons
 app.get('*', (req, res) => {
