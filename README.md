@@ -71,3 +71,20 @@ Without these variables Pryme runs in "this device only" mode (no login).
    - **PrymeQuant-Windows** → `PrymeQuant-Setup-1.0.0.exe` (install on Windows)
 4. Copy the contents of `assetlinks.json` into Render → Environment → `ASSETLINKS_JSON` (so the Android app opens full-screen, without a browser bar).
 Both apps load the live website, so every GitHub update reaches them automatically.
+
+## Pryme Agent (AI chat + background alerts)
+- **Agent tab**: chat in Sinhala, Singlish or English. It reads the live chart, your setups, trades and balances,
+  and can act for you: open a symbol, give a signal, take a limit / market entry, set price alerts, add symbols to its watch list.
+  It uses the same free AI keys (Account → AI keys). Without a key it still understands simple requests like "gold 1h signal".
+- **Background alerts**: Account → Notifications → *Agent alerts*. The server scans the agent's watch list every 4 minutes and
+  sends a push notification to your phone / PC when it finds a clean setup — even when the app is closed
+  (Android app / Chrome / Edge, and iPhone when added to the home screen).
+- So phones stay subscribed after Render restarts, add two env vars on Render once:
+  open `https://YOUR-SITE.onrender.com/api/push/newkeys`, copy `publicKey` → `VAPID_PUBLIC_KEY` and `privateKey` → `VAPID_PRIVATE_KEY`.
+
+## Render free plan "restarts"
+Render's free web service goes to sleep after 15 minutes without visitors, and the first visit afterwards takes about a minute to wake it.
+Every GitHub upload also redeploys it. Your data is safe (it lives in Firebase), but the agent can only scan while the server is awake.
+- Free fix: create a free monitor on **UptimeRobot** (uptimerobot.com) or **cron-job.org** that opens
+  `https://YOUR-SITE.onrender.com/api/health` every 10 minutes. One service running all month fits inside Render's 750 free hours.
+- Paid fix: Render → your service → change the instance type to **Starter** — it never sleeps.
