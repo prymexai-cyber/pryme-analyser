@@ -1,0 +1,103 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>About Pryme Quant</title>
+<meta name="description" content="Pryme Quant is built by Pryme X under founder Yasiru Gunasinghe.">
+<meta name="theme-color" content="#07090d">
+<link rel="icon" href="/icon-192.png">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&display=swap" rel="stylesheet">
+<script>try{var t=JSON.parse(localStorage.getItem("pa_settings")||"{}").appTheme||"dark";if(t==="system")t=matchMedia("(prefers-color-scheme: light)").matches?"light":"dark";document.documentElement.dataset.theme=t;}catch(e){}</script>
+<style>
+  :root{--bg:#07090d;--card:#0f141c;--line:#1d2633;--text:#e7ecf3;--muted:#8892a4;--brand:#c6ff3d;--ink:#0a0f02}
+  :root[data-theme=light]{--bg:#f3f5f9;--card:#fff;--line:#e2e6ee;--text:#131722;--muted:#5b6474;--brand:#4f8a00;--ink:#fff}
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{background:var(--bg);color:var(--text);font:14px/1.6 'Space Grotesk',system-ui,sans-serif;-webkit-font-smoothing:antialiased;padding:0 16px 40px}
+  .wrap{max-width:640px;margin:0 auto}
+  header{display:flex;align-items:center;gap:10px;padding:14px 0 10px;position:sticky;top:0;background:var(--bg)}
+  .back{display:inline-flex;align-items:center;gap:6px;color:var(--muted);text-decoration:none;font-size:13px;padding:6px 10px;border:1px solid var(--line);border-radius:10px}
+  .back:hover{color:var(--text)}
+  .hero{text-align:center;padding:26px 0 18px}
+  .logo{width:56px;height:56px;margin:0 auto 12px;color:var(--brand);border:1px solid var(--line);border-radius:16px;padding:9px;background:var(--card)}
+  h1{font-size:22px;letter-spacing:.12em}
+  h1 span{color:var(--brand)}
+  .tag{color:var(--muted);font-size:13px;margin-top:4px}
+  .card{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:16px;margin-top:12px}
+  h2{font-size:12px;letter-spacing:.12em;text-transform:uppercase;color:var(--muted);margin-bottom:8px}
+  p+p{margin-top:8px}
+  .founder{display:flex;align-items:center;gap:12px}
+  .founder .av{width:48px;height:48px;border-radius:50%;display:grid;place-items:center;background:color-mix(in srgb,var(--brand) 15%,transparent);color:var(--brand);font-weight:700}
+  .founder b{display:block;font-size:15px}
+  .founder small{color:var(--muted);font-size:12.5px}
+  ul.svc{list-style:none;display:grid;gap:8px}
+  ul.svc li{display:flex;gap:10px;align-items:flex-start;padding:10px;border:1px solid var(--line);border-radius:11px}
+  ul.svc li i{font-style:normal;font-size:18px;line-height:1.2}
+  ul.svc li b{display:block;font-size:13.5px}
+  ul.svc li small{color:var(--muted);font-size:12.5px}
+  .links{display:flex;flex-wrap:wrap;gap:8px}
+  .links a{padding:8px 12px;border-radius:10px;border:1px solid var(--line);color:var(--text);text-decoration:none;font-size:13px}
+  .links a.main{background:var(--brand);border-color:var(--brand);color:var(--ink);font-weight:600}
+  .fine{color:var(--muted);font-size:12px;text-align:center;margin-top:18px}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header><a class="back" href="/?tab=account">← Back to Pryme Quant</a></header>
+
+  <section class="hero">
+    <svg viewBox="0 0 64 64" class="logo"><path d="M10 46 L24 30 L33 39 L54 16" stroke="currentColor" stroke-width="6" fill="none" stroke-linecap="round" stroke-linejoin="round"/><circle cx="54" cy="16" r="5" fill="currentColor"/></svg>
+    <h1>PRYME <span>QUANT</span></h1>
+    <p class="tag">AI trading intelligence — built by Pryme X</p>
+  </section>
+
+  <div class="card">
+    <h2>About us</h2>
+    <p>Pryme Quant is an AI chart analyser for Forex, Gold, Crypto, global stocks and the Colombo Stock Exchange. It reads live charts with many analysis methods, gives clear entries with stop loss and take profit, and lets you practise on a demo account before trading real money.</p>
+    <p>Pryme Quant is built by <b>Pryme X</b>, under the leadership of founder <b>Yasiru Gunasinghe</b>.</p>
+  </div>
+
+  <div class="card">
+    <h2>Founder</h2>
+    <div class="founder"><div class="av">YG</div><div><b>Yasiru Gunasinghe</b><small>Founder · Pryme X</small></div></div>
+  </div>
+
+  <div class="card">
+    <h2>Pryme X services</h2>
+    <ul class="svc" id="svc"></ul>
+  </div>
+
+  <div class="card" id="contactCard">
+    <h2>Contact</h2>
+    <div class="links" id="links"></div>
+  </div>
+
+  <p class="fine">Pryme Quant gives AI-generated analysis for education and practice. No analysis can guarantee profit — trading carries real risk.<br>© <span id="yr"></span> Pryme X. All rights reserved.</p>
+</div>
+<script>
+  /* ===== EDIT YOUR COMPANY DETAILS HERE ===== */
+  var PRYME_X = {
+    services: [
+      ['📈', 'Pryme Quant', 'AI trading signals, live charts and demo / real account tracking'],
+      ['🤖', 'AI agents & automation', 'Custom AI assistants and chatbots that work for your business'],
+      ['💻', 'Web & mobile apps', 'Websites, web apps, Android and Windows apps'],
+      ['🎓', 'Trading education', 'Learn to read charts and manage risk with AI tools']
+    ],
+    links: [
+      // ['Website', 'https://your-site.com'],
+      // ['WhatsApp', 'https://wa.me/94XXXXXXXXX'],
+      // ['Email', 'mailto:hello@your-domain.com'],
+      // ['Facebook', 'https://facebook.com/your-page'],
+      ['Open Pryme Quant', '/', true]
+    ]
+  };
+  /* ========================================== */
+  document.getElementById('svc').innerHTML = PRYME_X.services.map(function (s) { return '<li><i>' + s[0] + '</i><div><b>' + s[1] + '</b><small>' + s[2] + '</small></div></li>'; }).join('');
+  document.getElementById('links').innerHTML = PRYME_X.links.map(function (l) { return '<a ' + (l[2] ? 'class="main" ' : '') + 'href="' + l[1] + '"' + (/^https?:/.test(l[1]) ? ' target="_blank" rel="noopener"' : '') + '>' + l[0] + '</a>'; }).join('');
+  document.getElementById('yr').textContent = new Date().getFullYear();
+  try { var s = JSON.parse(localStorage.getItem('pa_settings') || '{}'); var A = { lime: ['#c6ff3d', '#4f8a00'], cyan: ['#3de0ff', '#0086a8'], gold: ['#f6c24a', '#a86f00'], violet: ['#a78bfa', '#6d28d9'], pink: ['#ff6bcb', '#c0267f'], blue: ['#4e8bff', '#1d4ed8'] }[s.accent]; if (A) document.documentElement.style.setProperty('--brand', document.documentElement.dataset.theme === 'light' ? A[1] : A[0]); } catch (e) { }
+</script>
+</body>
+</html>
