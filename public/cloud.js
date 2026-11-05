@@ -7,7 +7,7 @@
    ============================================================ */
 'use strict';
 (() => {
-  const SYNC_KEYS = ['pa_settings', 'pa_accounts', 'pa_signals', 'pa_sigstats', 'pa_batch', 'pa_log', 'pa_events', 'pa_profile', 'pa_market', 'pa_tf', 'pa_view', 'pa_view2', 'pa_seq', 'pa_hperiod', 'pa_draw'];
+  const SYNC_KEYS = ['pa_settings', 'pa_accounts', 'pa_signals', 'pa_sigstats', 'pa_batch', 'pa_log', 'pa_events', 'pa_profile', 'pa_market', 'pa_tf', 'pa_view', 'pa_view2', 'pa_seq', 'pa_hperiod', 'pa_draw', 'pa_chat', 'pa_alerts'];
   const raw = k => { try { return localStorage.getItem(k); } catch { return null; } };
   const put = (k, v) => { try { v == null ? localStorage.removeItem(k) : localStorage.setItem(k, v); } catch { } };
   const device = raw('pa_device') || (() => { const d = Math.random().toString(36).slice(2, 10); put('pa_device', d); return d; })();
@@ -40,6 +40,7 @@
     $('#pmSignIn').classList.toggle('hidden', !!C.user); // always offer Google sign-in when signed out
     $('#pmSignOut').classList.toggle('hidden', !C.user);
     const hi = $('#helloName'); if (hi) hi.textContent = p.name ? `Hi, ${p.name.split(' ')[0]}` : '';
+    try { window.dispatchEvent(new Event('pq:profile')); } catch { }
   }
 
   /* ---------- sync indicator ---------- */
@@ -156,8 +157,8 @@
       else if (e.code !== 'auth/popup-closed-by-user') showGate('error', 'Sign-in failed: ' + (e.message || e));
     }
   }
-  async function signOut() {
-    if (!confirm('Sign out? Your data stays saved in your Google account and comes back when you sign in again.')) return;
+  async function signOut(sure) {
+    if (sure !== true && !confirm('Sign out? Your data stays saved in your Google account and comes back when you sign in again.')) return;
     if (C.saveT) { clearTimeout(C.saveT); C.saveT = null; await saveNow(); }
     if (C.unsub) C.unsub();
     SYNC_KEYS.forEach(k => put(k, null)); put('pa_uid', null); put('pa_cloud_ts', null); put('pa_local_ts', null);
@@ -261,5 +262,6 @@
       else { C.user = null; showGate('login'); }
     });
   }
+  Object.assign(C, { signIn, signOut, getProfile, avatarHTML, renderProfile, openProfile });
   start();
 })();
