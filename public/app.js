@@ -943,7 +943,7 @@ async function runAnalysis() {
   } catch (e) {
     st.className = 'ai-status err'; st.textContent = 'Analysis error: ' + e.message;
   } finally {
-    btn.classList.remove('busy'); btn.querySelector('.btn-label').textContent = 'Analyse with AI';
+    btn.classList.remove('busy'); btn.querySelector('.btn-label').textContent = 'Get AI signal';
   }
 }
 function gradeOf(s, A, ctx = {}) {
@@ -1015,7 +1015,7 @@ function renderResult(A) {
       ${z.note ? `<div class="meta" style="margin-top:4px">${esc(z.note)}</div>` : ''}
       ${s.checks ? `<div class="checks"><span class="verdict-tag ${s.ok ? 'ok' : 'watch'}">${s.ok ? '✓ TRADE' : '⏸ WATCH ONLY'}</span>${s.checks.map(c => `<span class="ck ${c.ok ? 'ok' : 'no'}" title="${esc(c.tip || '')}">${c.ok ? '✓' : '✗'} ${esc(c.label)}</span>`).join('')}</div>` : ''}
       <p class="why">${esc(s.reasoning)}</p>
-      <div class="setup-act"><button data-show="${i}">Show</button><button class="go ${s.ok === false ? 'dim' : ''}" data-trade="${i}" data-acc="demo">Take on Demo</button><button class="real ${s.ok === false ? 'dim' : ''}" data-trade="${i}" data-acc="real">Took on Real</button></div>
+      <div class="setup-act"><button data-show="${i}">Show</button><button class="take ${s.ok === false ? 'dim' : ''}" data-take="${i}">Take entry</button></div>
     </div>`;
   }).join('');
   const kl = A.keyLevels;
@@ -1038,9 +1038,18 @@ function addLog(msg) {
 function renderLog() {
   $('#autoLog').innerHTML = S.log.length ? S.log.slice(0, 14).map(l => `<li><span>${colomboTime(l.t)}</span>${esc(l.msg)}</li>`).join('') : '<li class="dim">Signal and auto events will appear here.</li>';
 }
-function notify(title, body) {
+function notify(title, body, kind = 'tpsl', url) {
+  const N = S.settings.notif || {};
+  if (N[kind] === false) return;
   try {
-    if ('Notification' in window && Notification.permission === 'granted') new Notification(title, { body });
+    if ('Notification' in window && Notification.permission === 'granted') {
+      const opt = { body, icon: '/icon-192.png', badge: '/icon-192.png', tag: kind + '|' + title, data: { url: url || location.pathname + location.search } };
+      if (navigator.serviceWorker && navigator.serviceWorker.getRegistration) navigator.serviceWorker.getRegistration().then(r => r ? r.showNotification(title, opt) : new Notification(title, opt)).catch(() => { try { new Notification(title, opt); } catch { } });
+      else new Notification(title, opt);
+    }
+  } catch { }
+  if (N.sound === false) return;
+  try {
     const ac = new (window.AudioContext || window.webkitAudioContext)();
     const o = ac.createOscillator(), g = ac.createGain(); o.connect(g); g.connect(ac.destination);
     o.frequency.value = 880; g.gain.setValueAtTime(0.12, ac.currentTime); g.gain.exponentialRampToValueAtTime(0.001, ac.currentTime + 0.4);
@@ -1078,6 +1087,8 @@ function newSignalBatch() {
   saveSignals(); renderSignals();
   addLog(`${sym} ${S.tf}: ${S.setups.length} new setups (${ACC_LABEL[S.settings.active]} balance ${money(ACC()[curOf(S.market)], curOf(S.market))}).`);
   if (S.settings.auto.autoTake === 'demo') autoTakeBest();
+  const best = S.setups.find(s => s.ok !== false) || S.setups[0];
+  if (best && (S.autoBusy || document.hidden)) notify(`Pryme: new ${sym} ${S.tf} setup`, `${best.direction === 'long' ? 'BUY' : 'SELL'} ${best.grade || ''} · entry ${fmt(best.entry)} · SL ${fmt(best.stopLoss)} · TP ${fmt(best.tp1)}`, 'entries', `/?tab=signals`);
 }
 function recordStat(g, win) {
   S.sigStats.push({ symbol: g.symbol, market: g.market, dir: g.dir, type: g.type, name: g.name, grade: g.grade, ok: g.ok, win, t: Date.now() });
@@ -1547,6 +1558,7 @@ function wire() {
 
   $('#setups').onclick = e => {
     const s = e.target.closest('[data-show]'), t = e.target.closest('[data-trade]'), card = e.target.closest('.setup');
+    const tk = e.target.closest('[data-take]'); if (tk) return window.openEntrySheet ? openEntrySheet(+tk.dataset.take) : openTradeModal(+tk.dataset.take, S.settings.active);
     if (t) return openTradeModal(+t.dataset.trade, t.dataset.acc);
     if (s) return drawSetupLines(+s.dataset.show);
     if (card) drawSetupLines(+card.dataset.i);
