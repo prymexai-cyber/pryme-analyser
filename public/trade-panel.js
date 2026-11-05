@@ -177,7 +177,7 @@
     if (!cs.length || $('#chart').classList.contains('hidden')) { cd.style.display = 'none'; return; }
     const last = cs[cs.length - 1], end = last.time + (TF_SEC[S.tf] || 900), left = Math.max(0, end - Math.floor(Date.now() / 1000));
     const y = candleS.priceToCoordinate(last.close);
-    if (y == null || !isFinite(y)) { cd.style.display = 'none'; return; }
+    if (y == null || !isFinite(y) || y < 0 || y + 26 > $('#chart').clientHeight) { cd.style.display = 'none'; return; }
     const h = Math.floor(left / 3600), m = Math.floor(left % 3600 / 60), s2 = left % 60, pad = v => String(v).padStart(2, '0');
     cd.textContent = (h ? pad(h) + ':' : '') + pad(m) + ':' + pad(s2);
     cd.style.display = 'block'; cd.style.top = (y + 11) + 'px';
@@ -186,6 +186,6 @@
     cd.className = 'bar-cd ' + (last.close >= last.open ? 'up' : 'down');
   }
   setInterval(() => { try { countdown(); renderQuote(); } catch { } }, 1000);
-  window.PrymeTrade = { place };
+  window.PrymeTrade = { place, closeOne, setLot, getLot, unitsFromLot, spreadFor, unitName, render: () => renderTradePanel() };
   renderTradePanel(); renderQuote();
 })();
