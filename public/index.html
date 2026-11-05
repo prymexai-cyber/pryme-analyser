@@ -5,6 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>Pryme Quant</title>
 <meta name="theme-color" content="#07090d">
+<script>try{var t=JSON.parse(localStorage.getItem("pa_settings")||"{}").appTheme||"dark";if(t==="system")t=matchMedia("(prefers-color-scheme: light)").matches?"light":"dark";document.documentElement.dataset.theme=t;}catch(e){}</script>
 <meta name="description" content="AI chart analyser for Forex, Crypto, CSE and global stocks — entry, stop loss and take profit levels with a demo wallet.">
 <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'><rect width='64' height='64' rx='14' fill='%2307090d'/><path d='M14 44 L26 30 L34 38 L50 18' stroke='%23c6ff3d' stroke-width='6' fill='none' stroke-linecap='round' stroke-linejoin='round'/></svg>">
 <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -56,7 +57,9 @@
 </header>
 <button class="sync-banner hidden" id="syncBanner">Your data changed on another device — tap to load the latest</button>
 
-<section class="controls" data-tabs="home live">
+<!-- the chart block moves between Home and Signals -->
+<div id="chartBlock" class="chart-block">
+<section class="controls">
   <div class="seg" id="marketSeg">
     <button data-m="forex">Forex</button>
     <button data-m="crypto">Crypto</button>
@@ -74,11 +77,7 @@
   </div>
   <div class="quick" id="quickPicks"></div>
 </section>
-
-<main class="layout">
-  <div class="main-col">
-  <!-- CHART -->
-  <section class="card chart-card" data-tabs="home live">
+  <section class="card chart-card">
     <div class="chart-head">
       <div>
         <div class="sym-title" id="symTitle">—</div>
@@ -117,9 +116,16 @@
     </div>
     <div class="ind-row" id="indRow"></div>
   </section>
+</div>
 
-  <!-- ACCOUNTS -->
-<section class="card demo-card" id="acctSection" data-tabs="account">
+<main class="pages">
+  <!-- HOME: live chart · manual buy / sell · drawing · my entries -->
+  <section class="page" data-page="home">
+    <div class="pg-grid">
+      <div class="pg-main">
+        <div class="chart-slot" id="slotHome"></div>
+  <section class="card demo-card" id="acctSection">
+  <div class="sec-title">My entries <small>trades you took — live P/L, TP / SL tracked automatically</small></div>
   <div class="demo-head">
     <div class="seg small" id="acctViewSeg">
       <button data-v="demo">Demo account</button>
@@ -145,22 +151,9 @@
   <div class="table-wrap"><table id="posTable"></table></div>
   <p class="fine" id="acctNote"></p>
 </section>
-  </div>
-
-  <!-- SIDE -->
-  <aside class="side">
-    <section class="card me-card" data-tabs="user">
-      <div class="me-head"><span id="meAvatar"></span><div><b id="meName">Trader</b><small id="meEmail"></small></div></div>
-      <div class="me-list">
-        <button data-me="profile">✎ Edit profile</button>
-        <button data-me="keys">🔑 AI keys & settings</button>
-        <button data-me="install" id="meInstall" class="hidden">📲 Install Pryme Quant app</button>
-        <button data-me="help">❓ How to use</button>
-        <button data-me="signin" id="meSignIn">Sign in with Google</button>
-        <button data-me="signout" id="meSignOut" class="danger hidden">Sign out</button>
       </div>
-    </section>
-    <section class="card trade-panel" id="tradePanel" data-tabs="live">
+      <div class="pg-side">
+    <section class="card trade-panel" id="tradePanel">
       <div class="tp-acct">
         <div><span class="tp-badge" id="tpAccLabel">PRACTICE ACCOUNT</span><b id="tpBal">$0.00</b></div>
         <button class="ghost tp-switch" id="tpAccSwitch">Switch to Real</button>
@@ -195,9 +188,47 @@
       <div class="tp-list" id="tpList"></div>
       <p class="fine" id="tpNote"></p>
     </section>
+      </div>
+    </div>
+  </section>
 
-    <section class="card acct-card" data-tabs="home account">
-      <h3>Account</h3>
+  <!-- SIGNALS: live AI signals + chart, take limit or market in one tap -->
+  <section class="page" data-page="signals">
+    <div class="pg-grid">
+      <div class="pg-main">
+        <div class="chart-slot" id="slotSignals"></div>
+    <section class="card result-card" id="resultCard">
+      <div class="empty" id="resultEmpty">
+        <div class="empty-mark">◎</div>
+        <p>Pick a market and symbol, set your balance, then open <b>Signals</b> and tap a timeframe. You'll get 3–4 entries with SL and TP drawn on the chart.</p>
+      </div>
+      <div id="resultBody" class="hidden">
+        <div class="verdict">
+          <div class="gauge" id="gauge"><svg viewBox="0 0 120 70"><path d="M10 62 A50 50 0 0 1 110 62" class="g-bg"/><path d="M10 62 A50 50 0 0 1 110 62" class="g-fg" id="gaugeFg"/></svg><div class="g-val" id="gaugeVal">0</div></div>
+          <div>
+            <div class="bias" id="biasLabel">NEUTRAL</div>
+            <div class="by" id="aiBy"></div>
+          </div>
+        </div>
+        <p class="summary" id="summaryText"></p>
+        <div class="pro-banner" id="proBanner"></div>
+        <div class="news-impact" id="newsImpact"></div>
+        <div id="setups"></div>
+        <div class="keylevels" id="keyLevels"></div>
+      </div>
+    </section>
+    <section class="card deep-card" id="deepCard">
+      <h3>Full market analysis <small id="deepSub">get an AI signal to fill this</small></h3>
+      <div id="deepBody" class="deep-body"><p class="fine">Pryme checks the chart with 29 analysis methods — technical, price action, structure, SMC/ICT, liquidity, volume, Wyckoff, Elliott, statistics, volatility, sentiment, intermarket, news and risk — and only trades when most of them agree.</p></div>
+    </section>
+      </div>
+      <div class="pg-side">
+    <section class="card acct-card">
+      <div class="sig-head"><h3>AI signal</h3><span class="sig-sym" id="sigSym">—</span></div>
+      <div class="sig-tf" id="sigTf">
+        <button data-stf="5m">5m</button><button data-stf="15m">15m</button><button data-stf="30m">30m</button><button data-stf="1h">1H</button><button data-stf="4h">4H</button><button data-stf="1d">1D</button>
+      </div>
+      <p class="fine sig-hint">Tap a timeframe — Pryme loads it and gives the signal in one click.</p>
       <div class="seg acct-seg" id="acctSeg">
         <button data-acc="demo">Demo</button>
         <button data-acc="real">Real</button>
@@ -209,11 +240,18 @@
         </div>
         <button class="ghost" id="btnEditBal">Edit balance</button>
       </div>
+      <label class="risk-l entry-style">Entry style
+        <select id="entryStyle">
+          <option value="ask">Ask me every time</option>
+          <option value="limit">Always limit (wait for the entry price)</option>
+          <option value="market">Always market (enter now)</option>
+        </select>
+      </label>
       <label class="risk-l">Risk per trade %
         <input type="number" id="riskInput" min="0.1" max="10" step="0.1" inputmode="decimal">
       </label>
       <button class="primary" id="btnAnalyse">
-        <span class="btn-label">Analyse with AI</span>
+        <span class="btn-label">Get AI signal</span>
         <span class="spinner"></span>
       </button>
       <button class="ghost wide" id="btnBacktest">📊 Backtest this chart</button>
@@ -260,50 +298,102 @@
         <p class="fine">Auto-take only uses A / A+ setups. Real trades are never placed for you — you place them at your broker and press "Took on Real" so Pryme tracks them.</p>
       </details>
     </section>
-
-    <section class="card result-card" id="resultCard" data-tabs="home signals">
-      <div class="empty" id="resultEmpty">
-        <div class="empty-mark">◎</div>
-        <p>Pick a market and symbol, set your balance, then hit <b>Analyse with AI</b>. You'll get 3–4 entries with SL and TP drawn on the chart.</p>
-      </div>
-      <div id="resultBody" class="hidden">
-        <div class="verdict">
-          <div class="gauge" id="gauge"><svg viewBox="0 0 120 70"><path d="M10 62 A50 50 0 0 1 110 62" class="g-bg"/><path d="M10 62 A50 50 0 0 1 110 62" class="g-fg" id="gaugeFg"/></svg><div class="g-val" id="gaugeVal">0</div></div>
-          <div>
-            <div class="bias" id="biasLabel">NEUTRAL</div>
-            <div class="by" id="aiBy"></div>
-          </div>
-        </div>
-        <p class="summary" id="summaryText"></p>
-        <div class="pro-banner" id="proBanner"></div>
-        <div class="news-impact" id="newsImpact"></div>
-        <div id="setups"></div>
-        <div class="keylevels" id="keyLevels"></div>
-      </div>
-    </section>
-
-    <section class="card deep-card" id="deepCard" data-tabs="signals">
-      <h3>Full market analysis <small id="deepSub">run "Analyse with AI" to fill this</small></h3>
-      <div id="deepBody" class="deep-body"><p class="fine">Pryme checks the chart with 29 analysis methods — technical, price action, structure, SMC/ICT, liquidity, volume, Wyckoff, Elliott, statistics, volatility, sentiment, intermarket, news and risk — and only trades when most of them agree.</p></div>
-    </section>
-
-    <section class="card sig-card" data-tabs="signals">
+    <section class="card sig-card">
       <h3>Live signals <span class="rec" id="sigRecord">—</span></h3>
       <ul class="sig-list" id="sigList"></ul>
       <h3 class="sub-h">Auto log</h3>
       <ul class="autolog" id="autoLog"></ul>
     </section>
-
-    <section class="card news-card" data-tabs="signals">
+    <section class="card news-card">
       <h3>Today's news <small id="newsQ"></small></h3>
       <ul id="newsList" class="news"></ul>
     </section>
-  </aside>
-</main>
+      </div>
+    </div>
+  </section>
 
-<footer class="foot" data-tabs="user">
-  <p>Pryme Quant gives AI-generated analysis for education and practice. No analysis can guarantee profit — markets carry real risk of loss. Test on the demo wallet first and never risk money you can't afford to lose.</p>
-</footer>
+  <!-- AGENT: AI assistant (Sinhala / English) -->
+  <section class="page" data-page="agent">
+    <div class="agent-wrap">
+      <div class="agent-head">
+        <div class="ag-ava"><svg viewBox="0 0 24 24"><path d="M12 3l1.8 4.2L18 9l-4.2 1.8L12 15l-1.8-4.2L6 9l4.2-1.8z"/></svg></div>
+        <div class="ag-who"><b>Pryme Agent</b><small id="agStatus">Ready</small></div>
+        <button class="ag-btn" id="agWatchBtn" title="What the agent watches in the background"><svg viewBox="0 0 24 24"><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="3"/></svg><span id="agWatchN">0</span></button>
+        <button class="ag-btn" id="agClear" title="Clear chat"><svg viewBox="0 0 24 24"><path d="M4 7h16M9 7V4h6v3M6 7l1 13h10l1-13"/></svg></button>
+      </div>
+      <div class="ag-watch hidden" id="agWatch"></div>
+      <div class="ag-msgs" id="agMsgs"></div>
+      <div class="ag-chips" id="agChips"></div>
+      <form class="ag-input" id="agForm" autocomplete="off">
+        <textarea id="agText" rows="1" placeholder="Ask anything — Sinhala or English…"></textarea>
+        <button type="submit" id="agSend" aria-label="Send"><svg viewBox="0 0 24 24"><path d="M4 12l16-8-6 16-2.5-6.5z"/></svg></button>
+      </form>
+    </div>
+  </section>
+
+  <!-- ACCOUNT -->
+  <section class="page" data-page="account">
+    <div class="acc-wrap">
+      <div class="acc-profile card">
+        <span id="accAvatar"></span>
+        <div class="acc-id"><b id="accName">Trader</b><small id="accEmail"></small></div>
+        <button class="ghost sm" id="accEdit">Edit</button>
+      </div>
+
+      <div class="acc-bals">
+        <div class="bal-card card" data-bal="demo">
+          <div class="bc-top"><span class="bc-tag">DEMO</span><button class="bc-use" data-use="demo">Active</button></div>
+          <b class="bc-usd" id="bcDemoUSD">$0.00</b><small class="bc-lkr" id="bcDemoLKR">Rs 0</small>
+          <button class="bc-edit" data-editbal="demo">Edit balance</button>
+        </div>
+        <div class="bal-card card" data-bal="real">
+          <div class="bc-top"><span class="bc-tag real">REAL</span><button class="bc-use" data-use="real">Use</button></div>
+          <b class="bc-usd" id="bcRealUSD">$0.00</b><small class="bc-lkr" id="bcRealLKR">Rs 0</small>
+          <button class="bc-edit" data-editbal="real">Edit balance</button>
+        </div>
+      </div>
+
+      <div class="acc-group card">
+        <div class="ag-title">Appearance</div>
+        <div class="acc-row"><span>Theme</span>
+          <div class="seg mini" id="themeSeg"><button data-th="light">Light</button><button data-th="dark">Dark</button><button data-th="system">Auto</button></div>
+        </div>
+        <div class="acc-row"><span>Accent colour</span><div class="accents" id="accentPick"></div></div>
+        <div class="acc-row"><span>Chart</span>
+          <div class="seg mini" id="chartSeg"><button data-ch="light">White</button><button data-ch="dark">Dark</button></div>
+        </div>
+      </div>
+
+      <div class="acc-group card">
+        <div class="ag-title">Notifications</div>
+        <label class="acc-row sw-row"><span><b>Auto entry alerts</b><small>New AI signals and auto setups</small></span><input type="checkbox" class="sw" id="nfEntries"></label>
+        <label class="acc-row sw-row"><span><b>TP / SL alerts</b><small>When a trade hits TP or stop</small></span><input type="checkbox" class="sw" id="nfTpsl"></label>
+        <label class="acc-row sw-row"><span><b>Agent alerts</b><small>The agent scans your watch list and notifies you, even when the app is closed</small></span><input type="checkbox" class="sw" id="nfAgent"></label>
+        <label class="acc-row sw-row"><span><b>Sound</b></span><input type="checkbox" class="sw" id="nfSound"></label>
+        <button class="acc-link" id="nfTest">Send a test notification <i>›</i></button>
+      </div>
+
+      <div class="acc-group card">
+        <div class="ag-title">Trading</div>
+        <label class="acc-row"><span>Time zone</span><select id="tzSel"></select></label>
+        <label class="acc-row"><span>Explanation language</span><select id="langSel2"><option value="singlish">Singlish</option><option value="sinhala">සිංහල</option><option value="english">English</option></select></label>
+        <button class="acc-link" data-open="keys">AI keys <i>›</i></button>
+        <button class="acc-link" data-open="history">Trade history & stats <i>›</i></button>
+      </div>
+
+      <div class="acc-group card">
+        <button class="acc-link" data-open="install" id="accInstall">Install the app <i>›</i></button>
+        <button class="acc-link" data-open="help">How to use <i>›</i></button>
+        <a class="acc-link" href="/about.html">About us <i>›</i></a>
+        <button class="acc-link" data-open="invite">Invite friends <i>›</i></button>
+      </div>
+
+      <button class="acc-logout card" id="accLogout">Log out</button>
+      <button class="acc-login card hidden" id="accLogin">Sign in with Google</button>
+      <p class="fine acc-foot">Pryme Quant by Pryme X · AI analysis for practice and education. Trading carries risk.</p>
+    </div>
+  </section>
+</main>
 
 <!-- SETTINGS MODAL -->
 <div class="modal hidden" id="settingsModal">
@@ -384,13 +474,50 @@
     <svg viewBox="0 0 64 64" class="logo"><path d="M10 46 L24 30 L33 39 L54 16" stroke="currentColor" stroke-width="6" fill="none" stroke-linecap="round" stroke-linejoin="round"/><circle cx="54" cy="16" r="5" fill="currentColor"/></svg>
     <div class="brand-name">PRYME<span>QUANT</span></div>
   </div>
-  <button data-tab="home" class="on"><svg viewBox="0 0 24 24"><path d="M3 10.5 12 3l9 7.5V20a1 1 0 0 1-1 1h-5v-6H9v6H4a1 1 0 0 1-1-1z"/></svg><span>Home</span></button>
-  <button data-tab="signals"><svg viewBox="0 0 24 24"><path d="M12 3l1.8 4.2L18 9l-4.2 1.8L12 15l-1.8-4.2L6 9l4.2-1.8z"/><path d="M19 15l.8 1.7 1.7.8-1.7.8L19 20l-.8-1.7-1.7-.8 1.7-.8z"/></svg><span>AI Signals</span></button>
-  <button data-tab="live"><svg viewBox="0 0 24 24"><path d="M3 3v18h18"/><path d="M7 15l4-5 3 3 5-7"/></svg><span>Live Charts</span><i class="nav-dot hidden" id="navLiveDot"></i></button>
-  <button data-tab="account"><svg viewBox="0 0 24 24"><rect x="3" y="6" width="18" height="14" rx="2"/><path d="M16 13h2M3 10h18M7 6V4h10v2"/></svg><span>Account</span></button>
-  <button data-tab="user"><svg viewBox="0 0 24 24"><circle cx="12" cy="8" r="4"/><path d="M4 21a8 8 0 0 1 16 0"/></svg><span>User</span></button>
-  <div class="nav-foot"><small>AI analysis for practice & education. Trading carries risk.</small></div>
+  <button data-tab="home" class="on"><svg viewBox="0 0 24 24"><path d="M3 10.5 12 3l9 7.5V20a1 1 0 0 1-1 1h-5v-6H9v6H4a1 1 0 0 1-1-1z"/></svg><span>Home</span><i class="nav-dot hidden" id="navLiveDot"></i></button>
+  <button data-tab="signals"><svg viewBox="0 0 24 24"><path d="M3 3v18h18"/><path d="M7 15l4-5 3 3 5-7"/></svg><span>Signals</span><i class="nav-dot hidden" id="navSigDot"></i></button>
+  <button data-tab="agent"><svg viewBox="0 0 24 24"><path d="M12 3l1.8 4.2L18 9l-4.2 1.8L12 15l-1.8-4.2L6 9l4.2-1.8z"/><path d="M19 15l.8 1.7 1.7.8-1.7.8L19 20l-.8-1.7-1.7-.8 1.7-.8z"/></svg><span>Agent</span><i class="nav-dot hidden" id="navAgDot"></i></button>
+  <button data-tab="account"><svg viewBox="0 0 24 24"><circle cx="12" cy="8" r="4"/><path d="M4 21a8 8 0 0 1 16 0"/></svg><span>Account</span></button>
+  <div class="nav-foot"><small>Pryme Quant by Pryme X</small></div>
 </nav>
+
+<!-- ENTRY STYLE SHEET (limit or market) -->
+<div class="sheet hidden" id="entrySheet">
+  <div class="sheet-box">
+    <div class="sheet-grip"></div>
+    <div class="es-head"><b id="esTitle">Take entry</b><small id="esSub"></small></div>
+    <div class="seg mini es-acc" id="esAcc"><button data-a="demo">Demo</button><button data-a="real">Real</button></div>
+    <button class="es-opt" data-mode="limit"><b>Limit entry</b><span id="esLimit">—</span><small>Waits for price to come to the entry. Better price, may not fill.</small></button>
+    <button class="es-opt" data-mode="market"><b>Market (now)</b><span id="esMarket">—</span><small>Enters at the current price. Same SL and TP.</small></button>
+    <p class="es-warn hidden" id="esWarn"></p>
+    <div class="es-foot"><button class="link-btn" id="esEdit">Edit levels</button><button class="link-btn" data-close>Cancel</button></div>
+  </div>
+</div>
+
+<!-- INVITE FRIENDS -->
+<div class="sheet hidden" id="inviteSheet">
+  <div class="sheet-box">
+    <div class="sheet-grip"></div>
+    <div class="es-head"><b>Invite friends</b><small>Share Pryme Quant</small></div>
+    <div class="share-grid">
+      <a data-share="whatsapp" target="_blank" rel="noopener"><i style="background:#25d366">W</i>WhatsApp</a>
+      <a data-share="telegram" target="_blank" rel="noopener"><i style="background:#2aabee">T</i>Telegram</a>
+      <a data-share="facebook" target="_blank" rel="noopener"><i style="background:#1877f2">f</i>Facebook</a>
+      <a data-share="x" target="_blank" rel="noopener"><i style="background:#111">X</i>X</a>
+      <a data-share="sms"><i style="background:#8892a4">✉</i>SMS</a>
+      <button data-share="copy"><i style="background:#c6ff3d;color:#111">⧉</i>Copy link</button>
+    </div>
+    <button class="primary" id="shareNative">More options…</button>
+  </div>
+</div>
+
+<!-- CONFIRM SHEET -->
+<div class="sheet hidden" id="askSheet">
+  <div class="sheet-box">
+    <div class="es-head"><b id="askTitle"></b><small id="askText"></small></div>
+    <div class="ask-btns"><button class="ghost" data-close>Cancel</button><button class="primary" id="askOk">OK</button></div>
+  </div>
+</div>
 
 <!-- INDICATORS -->
 <div class="modal hidden" id="indModal">
@@ -476,7 +603,7 @@
     <ol class="steps">
       <li><b>Pick your account.</b> <span>Demo to practise, Real to track your broker trades. Set the balance with <i>Edit balance</i>.</span></li>
       <li><b>Add a free AI key.</b> <span>⚙️ → Add key (Groq or Gemini are free). Without a key Pryme still gives setups from its own engine.</span></li>
-      <li><b>Choose a market & symbol, then tap <i>Analyse with AI</i>.</b> <span>You get 3–4 setups with Entry, SL and TP, graded A+ to C.</span></li>
+      <li><b>Choose a market & symbol, then tap a timeframe in <i>Signals</i>.</b> <span>You get 3–4 setups with Entry, SL and TP, graded A+ to C.</span></li>
       <li><b>Take a trade.</b> <span>"Take on Demo" or "Took on Real". Pryme watches the live price — TP1, TP2 and SL close automatically and the next setup appears.</span></li>
     </ol>
     <p class="fine">Signed in? Everything is saved to your Google account automatically — look for <b>Saved</b> at the top.</p>
@@ -520,6 +647,7 @@
 <script src="chart-tools.js"></script>
 <script src="trade-panel.js"></script>
 <script src="cloud.js"></script>
-<script src="mobile.js"></script>
+<script src="shell.js"></script>
+<script src="agent.js"></script>
 </body>
 </html>
